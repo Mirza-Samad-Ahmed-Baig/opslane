@@ -24,24 +24,21 @@ async fn get_system_info() -> Result<String, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Configure logging
-    use env_logger::Builder;
+    // Configure logging via Tauri plugin
     use log::LevelFilter;
 
-    let mut builder = Builder::from_default_env();
-
-    if cfg!(debug_assertions) {
-        builder.filter_level(LevelFilter::Debug);
+    let log_level = if cfg!(debug_assertions) {
+        LevelFilter::Debug
     } else {
-        builder.filter_level(LevelFilter::Info);
-    }
-
-    builder.init();
-
-    log::info!("Starting Opslane v{}", env!("CARGO_PKG_VERSION"));
+        LevelFilter::Info
+    };
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_log::Builder::default().build())
+        .plugin(
+            tauri_plugin_log::Builder::default()
+                .level(log_level)
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![
             // Legacy commands
             greet,
@@ -51,6 +48,7 @@ pub fn run() {
             check_database,
         ])
         .setup(|app| {
+            log::info!("Starting Opslane v{}", env!("CARGO_PKG_VERSION"));
             tauri::async_runtime::block_on(async {
                 match AppState::init().await {
                     Ok(state) => {
