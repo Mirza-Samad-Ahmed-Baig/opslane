@@ -1,0 +1,20 @@
+#!/usr/bin/env sh
+
+# Frontend checks
+npm run lint-staged
+
+# Backend checks
+echo "Running Rust checks..."
+cd src-tauri
+
+cargo fmt --check || {
+  echo "❌ Run 'cargo fmt' to fix formatting"
+  exit 1
+}
+
+cargo clippy -- -D warnings || {
+  echo "❌ Fix clippy warnings"
+  exit 1
+}
+
+echo "✅ Pre-commit checks passed!"

@@ -1,6 +1,6 @@
-# Opslane Desktop
+# Opslane
 
-A cross-platform desktop application built with Tauri 2.0, React 19, and TypeScript.
+Desktop app for managing multiple Claude Code sessions in parallel.
 
 ## Tech Stack
 
@@ -19,30 +19,43 @@ Based on the [cross-platform architecture research](thoughts/shared/research/202
 - **Startup Time**: <500ms (vs 1-2s for Electron)
 - **Native Performance**: Direct system calls via Rust
 
-## Prerequisites
+## Quick Start
 
-- [Rust](https://www.rust-lang.org/tools/install) 1.70+
-- [Node.js](https://nodejs.org/) 18+
-- Platform-specific dependencies:
-  - **macOS**: Xcode Command Line Tools
-  - **Linux**: webkit2gtk, build-essential, curl, wget, libssl-dev, libgtk-3-dev, libayatana-appindicator3-dev, librsvg2-dev
-  - **Windows**: Microsoft Visual Studio C++ Build Tools
+### Prerequisites
+- Node.js 18+
+- Rust 1.77+
+- Docker Desktop
 
-## Installation
-
+### Install & Run
 ```bash
-# Clone the repository
-git clone <repository-url>
+git clone https://github.com/opslane/opslane.git
 cd opslane
-
-# Install dependencies
 npm install
+npm run tauri:dev
+```
 
-# Install Tauri CLI (if not already installed)
-cargo install tauri-cli --version "^2.0"
+## Project Structure
+```
+opslane/
+├── src/           # React frontend
+├── src-tauri/     # Rust backend
+│   ├── migrations/  # Database migrations
+│   └── src/
+│       ├── commands/  # Tauri commands
+│       ├── services/  # Business logic (Phase 1+)
+│       └── models/    # Data structures (Phase 1+)
+└── specs/         # Product docs
 ```
 
 ## Development
+See [CONTRIBUTING.md](CONTRIBUTING.md)
+
+## Documentation
+- [Architecture](specs/architecture.md)
+- [Database Schema](specs/database-schema.md)
+- [Milestones](specs/milestones.md)
+
+## Development Commands
 
 ```bash
 # Start development server with hot reload
