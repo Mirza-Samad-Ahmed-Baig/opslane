@@ -34,6 +34,15 @@ impl SessionManager {
         }
     }
 
+    /// Generate container name from session ID
+    ///
+    /// Format: opslane-session-{first-8-chars-of-uuid}
+    /// Example: opslane-session-550e8400
+    fn generate_container_name(session_id: &str) -> String {
+        let short_uuid = &session_id[..8];
+        format!("opslane-session-{short_uuid}")
+    }
+
     /// Create a new session with container
     ///
     /// This orchestrates:
@@ -54,6 +63,55 @@ impl SessionManager {
 
         log::info!("Created session {} in database", session.id);
 
+        // Emit progress: Creating volume
+        let _ = app_handle.emit(
+            "session-progress",
+            json!({
+                "session_id": &session.id,
+                "status": "creating",
+                "message": "Creating Docker volume..."
+            }),
+        );
+
+        // Step 2: Create Docker volume for session persistence
+        let volume_name = match self.docker.create_session_volume(&session.id).await {
+            Ok(name) => {
+                log::info!("Created volume {} for session {}", name, session.id);
+                name
+            }
+            Err(e) => {
+                let error_msg = format!("Failed to create volume: {e}");
+                log::error!("{error_msg}");
+
+                if let Err(db_err) = self.db.update_session_status(&session.id, "error").await {
+                    log::error!("Failed to update session status: {db_err}");
+                }
+
+                return Err(anyhow!(error_msg));
+            }
+        };
+
+        // Step 3: Update session with volume name
+        if let Err(e) = self
+            .db
+            .update_session_volume(&session.id, &volume_name)
+            .await
+        {
+            let error_msg = format!("Failed to update session volume: {e}");
+            log::error!("{error_msg}");
+
+            // Cleanup: Remove the volume we just created
+            if let Err(cleanup_err) = self.docker.remove_volume(&volume_name).await {
+                log::warn!("Failed to cleanup volume after DB error: {cleanup_err}");
+            }
+
+            if let Err(db_err) = self.db.update_session_status(&session.id, "error").await {
+                log::error!("Failed to update session status: {db_err}");
+            }
+
+            return Err(anyhow!(error_msg));
+        }
+
         // Emit progress: Creating container
         let _ = app_handle.emit(
             "session-progress",
@@ -64,21 +122,20 @@ impl SessionManager {
             }),
         );
 
-        // Generate container name: opslane-session-{first-8-uuid-chars}
-        let short_uuid = &session.id[..8];
-        let container_name = format!("opslane-session-{short_uuid}");
+        // Generate container name
+        let container_name = Self::generate_container_name(&session.id);
 
         // Use session-specific limits or defaults
         let cpu_limit = self.default_cpu_limit; // TODO: Get from session once settings are implemented
         let memory_limit_mb = self.default_memory_limit_mb;
 
-        // Step 2: Create container
+        // Step 4: Create container with volume mounted
         let container_id = match self
             .docker
             .create_container(
                 &container_name,
                 &session.local_repo_path,
-                None, // TODO: Pass volume_name in Phase 3
+                Some(&volume_name), // Mount the session volume
                 cpu_limit,
                 memory_limit_mb,
             )
@@ -92,6 +149,13 @@ impl SessionManager {
                 // Update DB with error
                 let error_msg = format!("Failed to create container: {e}");
                 log::error!("{error_msg}");
+
+                // Cleanup: Remove the volume since container creation failed
+                if let Err(cleanup_err) = self.docker.remove_volume(&volume_name).await {
+                    log::warn!(
+                        "Failed to cleanup volume after container creation failure: {cleanup_err}"
+                    );
+                }
 
                 if let Err(db_err) = self.db.update_session_status(&session.id, "error").await {
                     log::error!("Failed to update session status: {db_err}");
@@ -111,7 +175,7 @@ impl SessionManager {
             }),
         );
 
-        // Step 3: Start container
+        // Step 5: Start container
         if let Err(e) = self.docker.start_container(&container_id).await {
             let error_msg = format!("Failed to start container: {e}");
             log::error!("{error_msg}");
@@ -119,6 +183,11 @@ impl SessionManager {
             // Try to clean up container
             if let Err(cleanup_err) = self.docker.remove_container(&container_id).await {
                 log::error!("Failed to cleanup container after start failure: {cleanup_err}");
+            }
+
+            // Try to clean up volume
+            if let Err(cleanup_err) = self.docker.remove_volume(&volume_name).await {
+                log::warn!("Failed to cleanup volume after start failure: {cleanup_err}");
             }
 
             // Update DB with error
@@ -135,7 +204,7 @@ impl SessionManager {
             session.id
         );
 
-        // Step 4: Update database with container info and set status to "ready"
+        // Step 6: Update database with container info and set status to "ready"
         if let Err(e) = self
             .db
             .update_session_container(&session.id, &container_id, &container_name, "main")
@@ -143,12 +212,22 @@ impl SessionManager {
         {
             log::error!("Failed to update container info: {e}");
             // Container is running but DB not updated - this is a problem
-            // Try to stop container
+            // Try to stop and remove container
             if let Err(stop_err) = self.docker.stop_container(&container_id).await {
                 log::error!("Failed to stop container: {stop_err}");
             }
             if let Err(rm_err) = self.docker.remove_container(&container_id).await {
                 log::error!("Failed to remove container: {rm_err}");
+            }
+            // Try to clean up volume
+            if let Err(cleanup_err) = self.docker.remove_volume(&volume_name).await {
+                log::warn!("Failed to cleanup volume after DB update failure: {cleanup_err}");
+            }
+            // Update session status to error
+            if let Err(db_err) = self.db.update_session_status(&session.id, "error").await {
+                log::error!(
+                    "Failed to update session status after container info update failure: {db_err}"
+                );
             }
             return Err(anyhow!("Failed to update session with container info: {e}"));
         }
@@ -213,61 +292,73 @@ impl SessionManager {
         }
     }
 
-    /// Delete session and cleanup container
+    /// Delete session and cleanup resources
     ///
     /// This performs:
-    /// 1. Soft delete in database (is_deleted=1)
+    /// 1. Get session details
     /// 2. Stop container (if running)
     /// 3. Remove container
+    /// 4. Remove Docker volume
+    /// 5. Soft delete in database (is_deleted=1)
     #[allow(dead_code)] // Will be called from Tauri commands (Phase 4)
     pub async fn delete_session(&self, session_id: &str) -> Result<()> {
-        // Get session to find container ID
+        // Get session to find container ID and volume name
         let session = self
             .db
             .get_session(session_id)
             .await
             .map_err(|e| anyhow!("Failed to get session: {e}"))?;
 
-        // Soft delete in database
-        self.db
-            .delete_session(session_id)
-            .await
-            .map_err(|e| anyhow!("Failed to delete session in database: {e}"))?;
-
-        log::info!("Soft deleted session {session_id}");
-
-        // Cleanup container if it exists
-        if let Some(container_id) = session.container_id {
+        // Step 1: Cleanup container if it exists
+        if let Some(container_id) = &session.container_id {
             log::info!("Cleaning up container {container_id} for session {session_id}");
 
             // Stop container (ignore errors if already stopped)
-            if let Err(e) = self.docker.stop_container(&container_id).await {
+            if let Err(e) = self.docker.stop_container(container_id).await {
                 log::warn!("Failed to stop container {container_id} (may already be stopped): {e}");
             }
 
             // Remove container
-            if let Err(e) = self.docker.remove_container(&container_id).await {
+            if let Err(e) = self.docker.remove_container(container_id).await {
                 log::error!("Failed to remove container {container_id}: {e}");
-                // Don't fail the whole operation - session is already deleted
+                // Don't fail the whole operation - continue with cleanup
             } else {
                 log::info!("Removed container {container_id}");
             }
         }
 
+        // Step 2: Remove Docker volume
+        if let Some(volume_name) = &session.volume_name {
+            log::info!("Removing volume {volume_name} for session {session_id}");
+
+            match self.docker.remove_volume(volume_name).await {
+                Ok(_) => log::info!("Volume {volume_name} removed successfully"),
+                Err(e) => log::warn!("Failed to remove volume {volume_name}: {e}"),
+            }
+        }
+
+        // Step 3: Soft delete in database
+        self.db
+            .delete_session(session_id)
+            .await
+            .map_err(|e| anyhow!("Failed to delete session in database: {e}"))?;
+
+        log::info!("Session {session_id} deleted");
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     // Note: Real integration tests would require Docker daemon
     // Here we test the orchestration logic with mocked components
 
     #[tokio::test]
     async fn test_container_name_generation() {
         let session_id = "550e8400-e29b-41d4-a716-446655440000";
-        let short_uuid = &session_id[..8];
-        let container_name = format!("opslane-session-{short_uuid}");
+        let container_name = SessionManager::generate_container_name(session_id);
 
         assert_eq!(container_name, "opslane-session-550e8400");
         assert_eq!(container_name.len(), 24); // "opslane-session-" (16) + "550e8400" (8) = 24
