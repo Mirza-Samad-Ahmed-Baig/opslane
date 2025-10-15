@@ -7,14 +7,26 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies
 node_modules
 dist
 dist-ssr
 *.local
 
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
 .idea
 .DS_Store
 *.suo
@@ -22,10 +34,25 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+*.swp
+*~
 
 # Tauri
 src-tauri/target
 src-tauri/WixTools
+src-tauri/gen
+
+# Rust
+Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
 
 # Build artifacts
 *.exe
@@ -34,6 +61,22 @@ src-tauri/WixTools
 *.deb
 *.AppImage
 *.msi
+*.tar.gz
+*.zip
+
+# OS specific
+Thumbs.db
+Desktop.ini
+
+# Testing
+coverage
+*.lcov
+.nyc_output
+
+# Temporary files
+*.tmp
+*.temp
+.cache
 
 # Claude artifacts
 .claude
