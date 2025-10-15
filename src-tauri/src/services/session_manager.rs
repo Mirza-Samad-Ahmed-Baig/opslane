@@ -78,6 +78,7 @@ impl SessionManager {
             .create_container(
                 &container_name,
                 &session.local_repo_path,
+                None, // TODO: Pass volume_name in Phase 3
                 cpu_limit,
                 memory_limit_mb,
             )
