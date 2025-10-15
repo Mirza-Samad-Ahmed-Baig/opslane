@@ -27,6 +27,19 @@ const initialFormData: NewSessionFormData = {
   base_branch: 'main',
 };
 
+/**
+ * NewSessionDialog - Modal dialog for creating a new development session
+ *
+ * @param open - Controls dialog visibility
+ * @param onOpenChange - Callback to handle dialog open/close state
+ *
+ * Features:
+ * - Form validation with field-level error display
+ * - Docker availability check with warning banner
+ * - Loading state during session creation
+ * - Auto-close and form reset on success
+ * - Accessible form with proper labels and ARIA attributes
+ */
 export function NewSessionDialog({ open, onOpenChange }: NewSessionDialogProps) {
   const [formData, setFormData] = useState<NewSessionFormData>(initialFormData);
   const [errors, setErrors] = useState<SessionFormErrors>({});

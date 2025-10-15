@@ -5,6 +5,16 @@ interface EmptyStateProps {
   onCreateClick: () => void;
 }
 
+/**
+ * EmptyState - Displays a friendly empty state when no sessions exist
+ *
+ * @param onCreateClick - Callback function to open the new session dialog
+ *
+ * Features:
+ * - Centered layout with icon and descriptive text
+ * - Call-to-action button to create first session
+ * - Welcoming message for new users
+ */
 export function EmptyState({ onCreateClick }: EmptyStateProps) {
   return (
     <div className="flex flex-col items-center justify-center h-[400px] text-center">

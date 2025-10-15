@@ -8,6 +8,18 @@ interface SessionListProps {
   onCreateClick: () => void;
 }
 
+/**
+ * SessionList - Main container for displaying all sessions in a responsive grid
+ *
+ * @param onCreateClick - Callback function to open the new session dialog
+ *
+ * Features:
+ * - Loading state with spinner during initial fetch
+ * - Error state with retry button for failed fetches
+ * - Empty state when no sessions exist
+ * - Responsive grid layout (1 col mobile, 2 tablet, 3 desktop)
+ * - Auto-refresh every 5 seconds via React Query
+ */
 export function SessionList({ onCreateClick }: SessionListProps) {
   const { data: sessions, isLoading, error, refetch } = useSessions();
 
