@@ -24,7 +24,13 @@
     "noUncheckedIndexedAccess": true,
 
     /* Tauri */
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+
+    /* Path Aliases */
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
   "include": ["src"],
   "references": [{ "path": "./tsconfig.node.json" }]
