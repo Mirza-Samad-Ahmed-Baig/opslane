@@ -378,4 +378,110 @@ mod tests {
         assert!((4..=1_048_576).contains(&2048i64));
         assert!((4..=1_048_576).contains(&1_048_576i64));
     }
+
+    // Phase 4: Volume Management Tests
+
+    #[tokio::test]
+    #[cfg_attr(not(feature = "integration-tests"), ignore = "requires Docker daemon")]
+    async fn test_create_and_remove_volume() {
+        let docker = DockerService::new().expect("Docker service creation failed");
+        let session_id = "550e8400-e29b-41d4-a716-446655440000";
+
+        // Create volume
+        let volume_name = docker
+            .create_session_volume(session_id)
+            .await
+            .expect("Volume creation failed");
+
+        assert_eq!(volume_name, "opslane-session-550e8400-e29");
+
+        // Verify volume exists
+        let exists = docker
+            .volume_exists(&volume_name)
+            .await
+            .expect("Volume check failed");
+        assert!(exists, "Volume should exist after creation");
+
+        // Remove volume
+        docker
+            .remove_volume(&volume_name)
+            .await
+            .expect("Volume removal failed");
+
+        // Verify volume removed
+        let exists = docker
+            .volume_exists(&volume_name)
+            .await
+            .expect("Volume check failed");
+        assert!(!exists, "Volume should not exist after removal");
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(feature = "integration-tests"), ignore = "requires Docker daemon")]
+    async fn test_container_with_volume_mount() {
+        let docker = DockerService::new().expect("Docker service creation failed");
+        let session_id = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+
+        // Create volume
+        let volume_name = docker
+            .create_session_volume(session_id)
+            .await
+            .expect("Volume creation failed");
+
+        // Create temporary test directory
+        let temp_dir = std::env::temp_dir().join("opslane-test-repo");
+        std::fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
+
+        // Create container with volume
+        let container_id = docker
+            .create_container(
+                "opslane-test-volume-mount",
+                temp_dir.to_str().unwrap(),
+                Some(&volume_name),
+                1.0,
+                512,
+            )
+            .await
+            .expect("Container creation failed");
+
+        // Cleanup
+        if let Err(e) = docker.remove_container(&container_id).await {
+            log::warn!("Failed to cleanup container in test: {e}");
+        }
+        if let Err(e) = docker.remove_volume(&volume_name).await {
+            log::warn!("Failed to cleanup volume in test: {e}");
+        }
+        if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
+            log::warn!("Failed to cleanup temp directory in test: {e}");
+        }
+
+        // Test passes if we got here without errors
+        assert!(!container_id.is_empty());
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(feature = "integration-tests"), ignore = "requires Docker daemon")]
+    async fn test_invalid_session_id_format() {
+        let docker = match DockerService::new() {
+            Ok(d) => d,
+            Err(_) => {
+                // Skip test if Docker is not available
+                // This allows the test to be ignored gracefully in CI/CD
+                return;
+            }
+        };
+
+        // Too short
+        let result = docker.create_session_volume("short").await;
+        assert!(result.is_err(), "Should reject session_id that's too short");
+
+        // Missing hyphen at position 8
+        let result = docker
+            .create_session_volume("550e8400ae29b41d4a716446655440000")
+            .await;
+        assert!(
+            result.is_err(),
+            "Should reject session_id without hyphen at position 8"
+        );
+    }
 }

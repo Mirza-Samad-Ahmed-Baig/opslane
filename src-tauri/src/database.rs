@@ -4,6 +4,7 @@ use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use std::path::PathBuf;
 
 /// Database service - minimal implementation for Phase 0
+#[derive(Clone)]
 pub struct Database {
     pool: SqlitePool,
 }
@@ -565,6 +566,108 @@ mod tests {
         // List should only return 2
         let sessions = db.list_sessions().await.unwrap();
         assert_eq!(sessions.len(), 2, "Should only return non-deleted sessions");
+
+        db.close().await;
+    }
+
+    // Phase 4: Session Persistence Tests
+
+    #[tokio::test]
+    async fn test_update_session_volume() {
+        let db = setup_test_db().await;
+
+        use crate::models::NewSession;
+
+        let new_session = NewSession {
+            name: "Volume Test".to_string(),
+            local_repo_path: "/tmp/volume-test".to_string(),
+            base_branch: "main".to_string(),
+        };
+
+        let session = db.create_session(new_session).await.unwrap();
+        assert!(session.volume_name.is_none());
+
+        // Update volume name
+        db.update_session_volume(&session.id, "opslane-session-test")
+            .await
+            .unwrap();
+
+        let updated = db.get_session(&session.id).await.unwrap();
+        assert_eq!(
+            updated.volume_name,
+            Some("opslane-session-test".to_string())
+        );
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_update_claude_session_id() {
+        let db = setup_test_db().await;
+
+        use crate::models::NewSession;
+
+        let new_session = NewSession {
+            name: "Claude ID Test".to_string(),
+            local_repo_path: "/tmp/claude-test".to_string(),
+            base_branch: "main".to_string(),
+        };
+
+        let session = db.create_session(new_session).await.unwrap();
+        assert!(session.claude_session_id.is_none());
+
+        // Update Claude session ID
+        db.update_claude_session_id(&session.id, "claude-session-abc123")
+            .await
+            .unwrap();
+
+        let updated = db.get_session(&session.id).await.unwrap();
+        assert_eq!(
+            updated.claude_session_id,
+            Some("claude-session-abc123".to_string())
+        );
+
+        db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_session_with_all_persistence_fields() {
+        let db = setup_test_db().await;
+
+        use crate::models::NewSession;
+
+        let new_session = NewSession {
+            name: "Full Persistence Test".to_string(),
+            local_repo_path: "/tmp/full-test".to_string(),
+            base_branch: "main".to_string(),
+        };
+
+        let session = db.create_session(new_session).await.unwrap();
+
+        // Set all persistence fields
+        db.update_session_volume(&session.id, "opslane-session-abc12345")
+            .await
+            .unwrap();
+        db.update_claude_session_id(&session.id, "claude-xyz789")
+            .await
+            .unwrap();
+
+        // Update status to 'ready' to trigger last_activity_at update
+        db.update_session_status(&session.id, "ready")
+            .await
+            .unwrap();
+
+        // Verify all fields present
+        let updated = db.get_session(&session.id).await.unwrap();
+        assert_eq!(
+            updated.volume_name,
+            Some("opslane-session-abc12345".to_string())
+        );
+        assert_eq!(updated.claude_session_id, Some("claude-xyz789".to_string()));
+        assert!(
+            updated.last_activity_at.is_some(),
+            "last_activity_at should be set after status change to 'ready'"
+        );
 
         db.close().await;
     }

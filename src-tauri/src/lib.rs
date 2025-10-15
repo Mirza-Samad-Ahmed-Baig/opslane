@@ -1,8 +1,8 @@
 mod commands;
-mod database;
+pub mod database;
 mod error;
-mod models;
-mod services;
+pub mod models;
+pub mod services;
 mod state;
 
 use commands::*;
