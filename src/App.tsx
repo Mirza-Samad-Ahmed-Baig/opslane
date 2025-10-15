@@ -1,115 +1,63 @@
-import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { useState } from 'react';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { Plus, AlertCircle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { SessionList } from '@/components/SessionList';
+import { NewSessionDialog } from '@/components/NewSessionDialog';
+import { queryClient } from '@/lib/query-client';
+import { useDockerStatus } from '@/hooks';
 import { logger } from './utils/logger';
 import './App.css';
 
-function App() {
-  const [name, setName] = useState('');
-  const [greetMsg, setGreetMsg] = useState('');
-  const [systemInfo, setSystemInfo] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    logger.info('Application mounted');
-
-    // Test backend health
-    invoke('health_check')
-      .then(() => logger.info('Backend health check passed'))
-      .catch((err) => logger.error('Backend health check failed', err as Error));
-
-    // Test database
-    invoke('check_database')
-      .then(() => logger.info('Database connection verified'))
-      .catch((err) => logger.error('Database check failed', err as Error));
-  }, []);
-
-  async function greet() {
-    setLoading(true);
-    logger.debug('Calling greet command', { name });
-    try {
-      const message = await invoke<string>('greet', { name });
-      setGreetMsg(message);
-      logger.info('Greet command successful');
-    } catch (error) {
-      logger.error('Error calling greet', error as Error);
-      setGreetMsg('Error: Could not greet');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function fetchSystemInfo() {
-    setLoading(true);
-    logger.debug('Fetching system info');
-    try {
-      const info = await invoke<string>('get_system_info');
-      setSystemInfo(info);
-      logger.info('System info fetched successfully');
-    } catch (error) {
-      logger.error('Error fetching system info', error as Error);
-      setSystemInfo('Error: Could not fetch system info');
-    } finally {
-      setLoading(false);
-    }
-  }
+function AppContent() {
+  const [showNewDialog, setShowNewDialog] = useState(false);
+  const { data: dockerAvailable } = useDockerStatus();
 
   return (
-    <div className="container">
-      <h1>Welcome to Opslane Desktop</h1>
-
-      <div className="card">
-        <p className="subtitle">A cross-platform desktop app built with Tauri 2.0 + React 19</p>
-
-        <div className="input-group">
-          <input
-            type="text"
-            placeholder="Enter your name..."
-            aria-label="Enter your name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && greet()}
-          />
-          <button
-            onClick={greet}
-            disabled={loading || !name}
-            aria-busy={loading}
-            aria-label="Greet user"
-          >
-            {loading ? 'Loading...' : 'Greet'}
-          </button>
+    <div className="min-h-screen bg-background">
+      {/* Header */}
+      <header className="border-b">
+        <div className="container mx-auto px-6 py-4 flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold">Opslane</h1>
+            <p className="text-sm text-muted-foreground">Manage your Claude development sessions</p>
+          </div>
+          <Button onClick={() => setShowNewDialog(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            New Session
+          </Button>
         </div>
+      </header>
 
-        {greetMsg && (
-          <div className="message success" role="status" aria-live="polite">
-            {greetMsg}
+      {/* Docker Warning Banner */}
+      {!dockerAvailable && (
+        <div className="border-b bg-yellow-50 border-yellow-200">
+          <div className="container mx-auto px-6 py-3 flex items-center gap-2 text-sm text-yellow-800">
+            <AlertCircle className="h-4 w-4" />
+            <span>Docker is not running. Start Docker to create sessions.</span>
           </div>
-        )}
+        </div>
+      )}
 
-        <div className="divider" />
+      {/* Main Content */}
+      <main className="container mx-auto">
+        <SessionList onCreateClick={() => setShowNewDialog(true)} />
+      </main>
 
-        <button
-          onClick={fetchSystemInfo}
-          disabled={loading}
-          className="secondary"
-          aria-busy={loading}
-          aria-label="Get system information"
-        >
-          {loading ? 'Loading...' : 'Get System Info'}
-        </button>
-
-        {systemInfo && (
-          <div className="message info" role="status" aria-live="polite">
-            <pre>{systemInfo}</pre>
-          </div>
-        )}
-      </div>
-
-      <div className="footer">
-        <p className="tech-stack">
-          <strong>Tech Stack:</strong> Tauri 2.0 • React 19 • TypeScript • Vite • Tailwind CSS
-        </p>
-      </div>
+      {/* New Session Dialog */}
+      <NewSessionDialog open={showNewDialog} onOpenChange={setShowNewDialog} />
     </div>
+  );
+}
+
+function App() {
+  // Log app mount
+  logger.info('Opslane application started');
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AppContent />
+    </QueryClientProvider>
   );
 }
 
