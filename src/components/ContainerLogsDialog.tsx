@@ -51,8 +51,8 @@ export function ContainerLogsDialog({
             )}
           </Button>
         </DialogHeader>
-        <div className="flex-1 overflow-auto bg-black text-green-400 font-mono text-xs p-4 rounded">
-          <pre>{logs || 'No logs available'}</pre>
+        <div className="flex-1 overflow-auto bg-card border font-mono text-xs p-4 rounded">
+          <pre className="text-foreground">{logs || 'No logs available'}</pre>
         </div>
       </DialogContent>
     </Dialog>

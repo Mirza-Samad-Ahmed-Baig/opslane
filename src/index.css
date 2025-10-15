@@ -55,6 +55,22 @@ body {
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-status-info-bg: var(--status-info-bg);
+  --color-status-info-fg: var(--status-info-fg);
+  --color-status-info-border: var(--status-info-border);
+
+  --color-status-warning-bg: var(--status-warning-bg);
+  --color-status-warning-fg: var(--status-warning-fg);
+  --color-status-warning-border: var(--status-warning-border);
+
+  --color-status-success-bg: var(--status-success-bg);
+  --color-status-success-fg: var(--status-success-fg);
+  --color-status-success-border: var(--status-success-border);
+
+  --color-status-error-bg: var(--status-error-bg);
+  --color-status-error-fg: var(--status-error-fg);
+  --color-status-error-border: var(--status-error-border);
 }
 
 :root {
@@ -91,6 +107,23 @@ body {
   --sidebar-accent-foreground: oklch(0.22 0.02 250);
   --sidebar-border: oklch(0.91 0.008 250);
   --sidebar-ring: oklch(0.22 0.02 250);
+
+  /* Status Colors - Light Mode */
+  --status-info-bg: oklch(0.9 0.05 250);
+  --status-info-fg: oklch(0.3 0.1 250);
+  --status-info-border: oklch(0.8 0.06 250);
+
+  --status-warning-bg: oklch(0.9 0.08 80);
+  --status-warning-fg: oklch(0.35 0.15 80);
+  --status-warning-border: oklch(0.8 0.1 80);
+
+  --status-success-bg: oklch(0.9 0.08 150);
+  --status-success-fg: oklch(0.3 0.12 150);
+  --status-success-border: oklch(0.8 0.1 150);
+
+  --status-error-bg: oklch(0.9 0.08 20);
+  --status-error-fg: oklch(0.35 0.15 20);
+  --status-error-border: oklch(0.8 0.1 20);
 }
 
 .dark {
@@ -147,6 +180,23 @@ body {
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 8%);
   --sidebar-ring: oklch(0.6 0 0);
+
+  /* Status Colors - Dark Mode */
+  --status-info-bg: oklch(0.2 0.05 250 / 30%);
+  --status-info-fg: oklch(0.75 0.08 250);
+  --status-info-border: oklch(0.3 0.05 250 / 40%);
+
+  --status-warning-bg: oklch(0.2 0.08 80 / 30%);
+  --status-warning-fg: oklch(0.8 0.12 80);
+  --status-warning-border: oklch(0.3 0.08 80 / 40%);
+
+  --status-success-bg: oklch(0.2 0.08 150 / 30%);
+  --status-success-fg: oklch(0.75 0.1 150);
+  --status-success-border: oklch(0.3 0.08 150 / 40%);
+
+  --status-error-bg: oklch(0.2 0.08 20 / 30%);
+  --status-error-fg: oklch(0.8 0.12 20);
+  --status-error-border: oklch(0.3 0.08 20 / 40%);
 }
 
 @layer base {

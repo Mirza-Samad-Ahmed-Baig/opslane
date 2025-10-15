@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
-import { AlertCircle, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -13,6 +13,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Alert } from '@/components/ui/alert';
 import { useCreateSession, useDockerStatus } from '@/hooks';
 import type { NewSessionFormData, SessionFormErrors } from '@/types';
 import { validateSessionForm } from '@/lib/validation';
@@ -156,34 +157,22 @@ export function NewSessionDialog({ open, onOpenChange }: NewSessionDialogProps) 
         </DialogHeader>
 
         {!dockerAvailable && (
-          <div className="flex items-start gap-3 p-3 rounded-md bg-yellow-50 border border-yellow-200">
-            <AlertCircle className="h-5 w-5 text-yellow-600 mt-0.5" />
-            <div className="text-sm text-yellow-800">
-              <p className="font-medium">Docker is not running</p>
-              <p className="text-yellow-700 mt-1">
-                Please start Docker Desktop before creating a session.
-              </p>
-            </div>
-          </div>
+          <Alert variant="warning" title="Docker is not running">
+            Please start Docker Desktop before creating a session.
+          </Alert>
         )}
 
         {/* Progress indicator */}
         {progressMessage && (
-          <div className="flex items-center gap-3 p-3 rounded-md bg-blue-50 border border-blue-200">
-            <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
-            <p className="text-sm text-blue-800">{progressMessage}</p>
-          </div>
+          <Alert variant="info" icon={Loader2} className="[&_svg]:animate-spin">
+            {progressMessage}
+          </Alert>
         )}
 
         <form onSubmit={handleSubmit}>
           <div className="space-y-6 py-6">
             {/* General Error */}
-            {errors.general && (
-              <div className="flex items-start gap-3 p-3 rounded-md bg-red-50 border border-red-200">
-                <AlertCircle className="h-5 w-5 text-red-600 mt-0.5" />
-                <p className="text-sm text-red-800">{errors.general}</p>
-              </div>
-            )}
+            {errors.general && <Alert variant="error">{errors.general}</Alert>}
 
             {/* Session Name */}
             <div className="space-y-2">

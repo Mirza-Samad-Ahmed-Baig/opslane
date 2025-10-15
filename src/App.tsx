@@ -3,8 +3,9 @@ import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { register, unregisterAll } from '@tauri-apps/plugin-global-shortcut';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-import { Plus, AlertCircle, Palette } from 'lucide-react';
+import { Plus, Palette } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Alert } from '@/components/ui/alert';
 import { SessionList } from '@/components/SessionList';
 import { NewSessionDialog } from '@/components/NewSessionDialog';
 import { ComponentShowcase } from '@/pages/ComponentShowcase';
@@ -70,10 +71,9 @@ function HomePage() {
 
       {/* Docker Warning Banner */}
       {!dockerAvailable && (
-        <div className="border-b bg-yellow-50 border-yellow-200">
-          <div className="container mx-auto px-6 py-3 flex items-center gap-2 text-sm text-yellow-800">
-            <AlertCircle className="h-4 w-4" />
-            <span>Docker is not running. Start Docker to create sessions.</span>
+        <div className="border-b">
+          <div className="container mx-auto px-6 py-3">
+            <Alert variant="warning">Docker is not running. Start Docker to create sessions.</Alert>
           </div>
         </div>
       )}

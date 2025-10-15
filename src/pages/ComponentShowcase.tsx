@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useTheme } from 'next-themes';
-import { Sun, Moon, ArrowLeft } from 'lucide-react';
+import { Sun, Moon, ArrowLeft, Loader2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import { Alert } from '@/components/ui/alert';
 import {
   Card,
   CardContent,
@@ -203,6 +204,93 @@ export function ComponentShowcase() {
                 </div>
               </CardContent>
             </Card>
+          </section>
+
+          {/* Section: Alerts */}
+          <section>
+            <h2 className="text-xl font-semibold mb-4">Alerts</h2>
+            <div className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Alert Variants</CardTitle>
+                  <CardDescription>Theme-aware status alerts with semantic colors</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <Alert variant="info">
+                    This is an informational message. Session is being created.
+                  </Alert>
+                  <Alert variant="warning">
+                    Docker is not running. Start Docker to create sessions.
+                  </Alert>
+                  <Alert variant="success">
+                    Session created successfully! Container is now ready.
+                  </Alert>
+                  <Alert variant="error">
+                    Failed to create session. Docker daemon not accessible.
+                  </Alert>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Alerts with Titles</CardTitle>
+                  <CardDescription>Structured alerts with bold titles</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <Alert variant="info" title="Session Starting">
+                    Your development environment is being initialized. This may take a moment.
+                  </Alert>
+                  <Alert variant="warning" title="Docker Not Available">
+                    Please start Docker Desktop before creating a session. Sessions require Docker
+                    containers.
+                  </Alert>
+                  <Alert variant="success" title="Ready to Code">
+                    Your session is ready! Open the terminal or start chatting with Claude.
+                  </Alert>
+                  <Alert variant="error" title="Connection Failed">
+                    Unable to connect to the Docker daemon. Check that Docker is running and try
+                    again.
+                  </Alert>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Alerts with Custom Icons</CardTitle>
+                  <CardDescription>Using custom icons like loading spinners</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <Alert variant="info" icon={Loader2} className="[&_svg]:animate-spin">
+                    Cloning repository... This may take a few minutes for large repositories.
+                  </Alert>
+                </CardContent>
+              </Card>
+
+              <div className="mt-4 p-4 bg-muted rounded-lg">
+                <h3 className="text-sm font-semibold mb-2">Color Token System</h3>
+                <div className="text-xs text-muted-foreground space-y-1">
+                  <p>
+                    <strong>Info (Blue):</strong> status-info-bg, status-info-fg, status-info-border
+                  </p>
+                  <p>
+                    <strong>Warning (Yellow):</strong> status-warning-bg, status-warning-fg,
+                    status-warning-border
+                  </p>
+                  <p>
+                    <strong>Success (Green):</strong> status-success-bg, status-success-fg,
+                    status-success-border
+                  </p>
+                  <p>
+                    <strong>Error (Red):</strong> status-error-bg, status-error-fg,
+                    status-error-border
+                  </p>
+                  <p className="mt-2 text-xs">
+                    All colors automatically adapt to light/dark themes and meet WCAG AAA
+                    accessibility standards (7:1+ contrast).
+                  </p>
+                </div>
+              </div>
+            </div>
           </section>
 
           {/* Section: Cards */}

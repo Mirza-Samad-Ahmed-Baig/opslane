@@ -117,7 +117,7 @@ export function SessionCard({ session }: SessionCardProps) {
               </div>
             )}
             {session.error_message && (
-              <div className="text-red-600 text-xs mt-2">
+              <div className="text-status-error-fg text-xs mt-2">
                 <span className="font-medium">Error:</span> {session.error_message}
               </div>
             )}
