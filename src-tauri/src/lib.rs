@@ -43,9 +43,15 @@ pub fn run() {
             // Legacy commands
             greet,
             get_system_info,
-            // New commands
+            // Health commands
             health_check,
             check_database,
+            // Docker commands
+            check_docker,
+            // Session commands
+            create_session,
+            list_sessions,
+            delete_session,
         ])
         .setup(|app| {
             log::info!("Starting Opslane v{}", env!("CARGO_PKG_VERSION"));
