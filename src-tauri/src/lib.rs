@@ -49,6 +49,7 @@ pub fn run() {
         ])
         .setup(|app| {
             log::info!("Starting Opslane v{}", env!("CARGO_PKG_VERSION"));
+
             tauri::async_runtime::block_on(async {
                 match AppState::init().await {
                     Ok(state) => {

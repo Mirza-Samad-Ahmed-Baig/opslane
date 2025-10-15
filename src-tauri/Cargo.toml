@@ -14,6 +14,10 @@ rust-version = "1.77.2"
 name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# Enable integration tests that require external services (e.g., Docker daemon)
+integration-tests = []
+
 [build-dependencies]
 tauri-build = { version = "2.4.1", features = [] }
 
@@ -27,6 +31,9 @@ tauri-plugin-log = "2"
 # Database dependencies
 sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite"] }
 tokio = { version = "1", features = ["full"] }
+
+# Docker dependencies
+bollard = "0.18"
 
 # Basic utilities
 thiserror = "1.0"
