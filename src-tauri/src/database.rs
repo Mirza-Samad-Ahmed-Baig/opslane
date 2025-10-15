@@ -100,8 +100,9 @@ impl Database {
             RETURNING
                 id, name, local_repo_path, base_branch,
                 container_id, container_name, container_branch,
-                status, error_message, created_at, updated_at,
-                is_deleted
+                status, error_message,
+                volume_name, claude_session_id, last_activity_at,
+                created_at, updated_at, is_deleted
             "#,
         )
         .bind(&id)
@@ -122,8 +123,9 @@ impl Database {
             SELECT
                 id, name, local_repo_path, base_branch,
                 container_id, container_name, container_branch,
-                status, error_message, created_at, updated_at,
-                is_deleted
+                status, error_message,
+                volume_name, claude_session_id, last_activity_at,
+                created_at, updated_at, is_deleted
             FROM sessions
             WHERE is_deleted = 0
             ORDER BY created_at DESC
@@ -143,8 +145,9 @@ impl Database {
             SELECT
                 id, name, local_repo_path, base_branch,
                 container_id, container_name, container_branch,
-                status, error_message, created_at, updated_at,
-                is_deleted
+                status, error_message,
+                volume_name, claude_session_id, last_activity_at,
+                created_at, updated_at, is_deleted
             FROM sessions
             WHERE id = ?
             "#,
@@ -219,6 +222,46 @@ impl Database {
             "#,
         )
         .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Update session volume information
+    #[allow(dead_code)]
+    pub async fn update_session_volume(&self, session_id: &str, volume_name: &str) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE sessions
+            SET volume_name = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(volume_name)
+        .bind(session_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Update Claude session ID (after first run)
+    #[allow(dead_code)]
+    pub async fn update_claude_session_id(
+        &self,
+        session_id: &str,
+        claude_session_id: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE sessions
+            SET claude_session_id = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(claude_session_id)
+        .bind(session_id)
         .execute(&self.pool)
         .await?;
 
@@ -307,6 +350,9 @@ mod tests {
             "created_at",
             "updated_at",
             "is_deleted",
+            "volume_name",
+            "claude_session_id",
+            "last_activity_at",
         ];
 
         assert_eq!(

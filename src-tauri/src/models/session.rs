@@ -30,6 +30,12 @@ pub struct Session {
     pub container_branch: Option<String>,
     pub status: String,
     pub error_message: Option<String>,
+
+    // Session persistence fields
+    pub volume_name: Option<String>, // Docker volume for Claude session data
+    pub claude_session_id: Option<String>, // Claude's session ID
+    pub last_activity_at: Option<String>, // For idle detection
+
     pub created_at: String,
     pub updated_at: String,
     pub is_deleted: bool,
