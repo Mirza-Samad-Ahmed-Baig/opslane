@@ -335,8 +335,8 @@ mod tests {
         assert_eq!(session.local_repo_path, "/tmp/test-repo");
         assert_eq!(session.base_branch, "main");
         assert_eq!(session.status, "created");
-        assert_eq!(session.is_deleted, false);
-        assert!(session.id.len() > 0, "ID should be generated");
+        assert!(!session.is_deleted);
+        assert!(!session.id.is_empty(), "ID should be generated");
         assert!(
             session.container_id.is_none(),
             "Container ID should be empty initially"
@@ -354,8 +354,8 @@ mod tests {
         // Create multiple sessions
         for i in 1..=3 {
             let new_session = NewSession {
-                name: format!("Session {}", i),
-                local_repo_path: format!("/tmp/repo-{}", i),
+                name: format!("Session {i}"),
+                local_repo_path: format!("/tmp/repo-{i}"),
                 base_branch: "main".to_string(),
             };
             db.create_session(new_session).await.unwrap();
@@ -482,7 +482,7 @@ mod tests {
 
         // Session should still exist in DB but marked deleted
         let deleted = db.get_session(&session.id).await.unwrap();
-        assert_eq!(deleted.is_deleted, true);
+        assert!(deleted.is_deleted);
 
         // Should not appear in list
         let sessions = db.list_sessions().await.unwrap();
@@ -505,8 +505,8 @@ mod tests {
         let mut session_ids = vec![];
         for i in 1..=3 {
             let new_session = NewSession {
-                name: format!("Session {}", i),
-                local_repo_path: format!("/tmp/repo-{}", i),
+                name: format!("Session {i}"),
+                local_repo_path: format!("/tmp/repo-{i}"),
                 base_branch: "main".to_string(),
             };
             let session = db.create_session(new_session).await.unwrap();

@@ -15,8 +15,21 @@ pub struct DockerService {
 impl DockerService {
     /// Create new Docker service by connecting to local daemon
     pub fn new() -> Result<Self> {
-        let client = Docker::connect_with_local_defaults()
-            .map_err(|e| anyhow!("Failed to connect to Docker daemon: {e}"))?;
+        // Try multiple socket locations for compatibility across systems
+        let client = if let Ok(client) = Docker::connect_with_socket_defaults() {
+            // Try default Unix socket first (works on Linux and some macOS setups)
+            client
+        } else if let Ok(home) = std::env::var("HOME") {
+            // Try Docker Desktop socket on macOS
+            let socket_path = format!("{home}/.docker/run/docker.sock");
+            Docker::connect_with_unix(&socket_path, 120, bollard::API_DEFAULT_VERSION)
+                .map_err(|e| anyhow!("Failed to connect to Docker daemon at {socket_path}: {e}"))?
+        } else {
+            return Err(anyhow!(
+                "Failed to connect to Docker daemon: no valid socket found"
+            ));
+        };
+
         Ok(Self { client })
     }
 

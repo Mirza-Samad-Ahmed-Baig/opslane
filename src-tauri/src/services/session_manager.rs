@@ -214,7 +214,7 @@ mod tests {
     async fn test_container_name_generation() {
         let session_id = "550e8400-e29b-41d4-a716-446655440000";
         let short_uuid = &session_id[..8];
-        let container_name = format!("opslane-session-{}", short_uuid);
+        let container_name = format!("opslane-session-{short_uuid}");
 
         assert_eq!(container_name, "opslane-session-550e8400");
         assert_eq!(container_name.len(), 24); // "opslane-session-" (16) + "550e8400" (8) = 24
