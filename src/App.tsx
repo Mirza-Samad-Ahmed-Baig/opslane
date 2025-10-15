@@ -1,17 +1,19 @@
 import { useState, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { register, unregisterAll } from '@tauri-apps/plugin-global-shortcut';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-import { Plus, AlertCircle } from 'lucide-react';
+import { Plus, AlertCircle, Palette } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SessionList } from '@/components/SessionList';
 import { NewSessionDialog } from '@/components/NewSessionDialog';
+import { ComponentShowcase } from '@/pages/ComponentShowcase';
 import { queryClient } from '@/lib/query-client';
 import { useDockerStatus } from '@/hooks';
 import { logger } from './utils/logger';
 import './App.css';
 
-function AppContent() {
+function HomePage() {
   const [showNewDialog, setShowNewDialog] = useState(false);
   const { data: dockerAvailable } = useDockerStatus();
 
@@ -52,10 +54,17 @@ function AppContent() {
             <h1 className="text-2xl font-bold">Opslane</h1>
             <p className="text-sm text-muted-foreground">Manage your Claude development sessions</p>
           </div>
-          <Button onClick={() => setShowNewDialog(true)} title="New Session (⌘N)">
-            <Plus className="mr-2 h-4 w-4" />
-            New Session
-          </Button>
+          <div className="flex items-center gap-2">
+            <Link to="/showcase">
+              <Button variant="ghost" size="icon" title="Component Showcase">
+                <Palette className="h-4 w-4" />
+              </Button>
+            </Link>
+            <Button onClick={() => setShowNewDialog(true)} title="New Session (⌘N)">
+              <Plus className="mr-2 h-4 w-4" />
+              New Session
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -86,7 +95,12 @@ function App() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <AppContent />
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/showcase" element={<ComponentShowcase />} />
+        </Routes>
+      </BrowserRouter>
     </QueryClientProvider>
   );
 }
