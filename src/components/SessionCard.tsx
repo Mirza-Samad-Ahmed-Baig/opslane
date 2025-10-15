@@ -1,8 +1,10 @@
 import { useState } from 'react';
-import { Trash2, Loader2 } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
+import { Trash2, Loader2, Terminal, FileText } from 'lucide-react';
 import type { Session } from '@/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { ContainerLogsDialog } from './ContainerLogsDialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,6 +33,8 @@ interface SessionCardProps {
  */
 export function SessionCard({ session }: SessionCardProps) {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showLogsDialog, setShowLogsDialog] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
   const deleteSession = useDeleteSession();
 
   const handleDelete = () => {
@@ -38,28 +42,66 @@ export function SessionCard({ session }: SessionCardProps) {
     setShowDeleteDialog(false);
   };
 
+  const handleOpenTerminal = async () => {
+    try {
+      await invoke('open_container_terminal', { sessionId: session.id });
+    } catch (error) {
+      console.error('Failed to open terminal:', error);
+    }
+  };
+
   return (
     <>
-      <Card className="relative">
+      <Card
+        className="relative transition-all hover:shadow-lg border-border/50"
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+      >
         <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
           <div className="space-y-1 flex-1">
             <CardTitle className="text-lg font-semibold">{session.name}</CardTitle>
             <SessionStatusBadge status={session.status} />
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setShowDeleteDialog(true)}
-            disabled={deleteSession.isPending}
-            className="h-8 w-8"
-            aria-label={`Delete session ${session.name}`}
-          >
-            {deleteSession.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Trash2 className="h-4 w-4" />
-            )}
-          </Button>
+
+          {/* Actions - only show on hover */}
+          {isHovered && (
+            <div className="flex gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowLogsDialog(true)}
+                className="h-8 w-8"
+                title="View Container Logs"
+                aria-label={`View logs for ${session.name}`}
+              >
+                <FileText className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleOpenTerminal}
+                className="h-8 w-8"
+                title="Open in Terminal"
+                aria-label={`Open terminal for ${session.name}`}
+              >
+                <Terminal className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowDeleteDialog(true)}
+                disabled={deleteSession.isPending}
+                className="h-8 w-8"
+                aria-label={`Delete session ${session.name}`}
+              >
+                {deleteSession.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
+          )}
         </CardHeader>
         <CardContent>
           <div className="space-y-2 text-sm text-muted-foreground">
@@ -82,6 +124,14 @@ export function SessionCard({ session }: SessionCardProps) {
           </div>
         </CardContent>
       </Card>
+
+      {/* Dialogs */}
+      <ContainerLogsDialog
+        sessionId={session.id}
+        sessionName={session.name}
+        open={showLogsDialog}
+        onOpenChange={setShowLogsDialog}
+      />
 
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent>

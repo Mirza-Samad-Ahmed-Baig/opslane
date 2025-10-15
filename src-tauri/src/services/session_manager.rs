@@ -2,7 +2,9 @@ use crate::database::Database;
 use crate::models::{NewSession, Session};
 use crate::services::DockerService;
 use anyhow::{anyhow, Result};
+use serde_json::json;
 use std::sync::Arc;
+use tauri::{AppHandle, Emitter};
 
 /// Session manager orchestrates database and Docker operations
 pub struct SessionManager {
@@ -42,7 +44,7 @@ impl SessionManager {
     ///
     /// On any failure after step 1, updates status="error" and error_message
     #[allow(dead_code)] // Will be called from Tauri commands (Phase 4)
-    pub async fn create_session(&self, new: NewSession) -> Result<Session> {
+    pub async fn create_session(&self, new: NewSession, app_handle: AppHandle) -> Result<Session> {
         // Step 1: Create database record
         let mut session = self
             .db
@@ -51,6 +53,16 @@ impl SessionManager {
             .map_err(|e| anyhow!("Failed to create session in database: {e}"))?;
 
         log::info!("Created session {} in database", session.id);
+
+        // Emit progress: Creating container
+        let _ = app_handle.emit(
+            "session-progress",
+            json!({
+                "session_id": &session.id,
+                "status": "creating",
+                "message": "Creating container..."
+            }),
+        );
 
         // Generate container name: opslane-session-{first-8-uuid-chars}
         let short_uuid = &session.id[..8];
@@ -87,6 +99,16 @@ impl SessionManager {
                 return Err(anyhow!(error_msg));
             }
         };
+
+        // Emit progress: Starting container
+        let _ = app_handle.emit(
+            "session-progress",
+            json!({
+                "session_id": &session.id,
+                "status": "starting",
+                "message": "Starting container..."
+            }),
+        );
 
         // Step 3: Start container
         if let Err(e) = self.docker.start_container(&container_id).await {
@@ -148,6 +170,16 @@ impl SessionManager {
             container_id
         );
 
+        // Emit progress: Container ready
+        let _ = app_handle.emit(
+            "session-progress",
+            json!({
+                "session_id": &session.id,
+                "status": "ready",
+                "message": "Container ready"
+            }),
+        );
+
         Ok(session)
     }
 
@@ -158,6 +190,26 @@ impl SessionManager {
             .list_sessions()
             .await
             .map_err(|e| anyhow!("Failed to list sessions: {e}"))
+    }
+
+    /// Get a single session by ID
+    pub async fn get_session(&self, session_id: &str) -> Result<Session> {
+        self.db
+            .get_session(session_id)
+            .await
+            .map_err(|e| anyhow!("Failed to get session: {e}"))
+    }
+
+    /// Get container logs for a session
+    pub async fn get_container_logs(&self, session_id: &str) -> Result<String> {
+        let session = self.get_session(session_id).await?;
+
+        if let Some(container_id) = &session.container_id {
+            let logs = self.docker.get_logs(container_id).await?;
+            Ok(logs)
+        } else {
+            Err(anyhow!("No container for this session"))
+        }
     }
 
     /// Delete session and cleanup container

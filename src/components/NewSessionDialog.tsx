@@ -1,5 +1,7 @@
-import { useState } from 'react';
-import { AlertCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import { listen } from '@tauri-apps/api/event';
+import { AlertCircle, Loader2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -27,6 +29,12 @@ const initialFormData: NewSessionFormData = {
   base_branch: 'main',
 };
 
+interface ProgressEvent {
+  session_id: string;
+  status: string;
+  message: string;
+}
+
 /**
  * NewSessionDialog - Modal dialog for creating a new development session
  *
@@ -43,9 +51,38 @@ const initialFormData: NewSessionFormData = {
 export function NewSessionDialog({ open, onOpenChange }: NewSessionDialogProps) {
   const [formData, setFormData] = useState<NewSessionFormData>(initialFormData);
   const [errors, setErrors] = useState<SessionFormErrors>({});
+  const [progressMessage, setProgressMessage] = useState<string | null>(null);
 
   const createSession = useCreateSession();
   const { data: dockerAvailable } = useDockerStatus();
+
+  // Listen for progress events
+  useEffect(() => {
+    const setupListener = async () => {
+      const unlisten = await listen<ProgressEvent>('session-progress', (event) => {
+        setProgressMessage(event.payload.message);
+
+        // Clear progress when done
+        if (event.payload.status === 'ready') {
+          setTimeout(() => setProgressMessage(null), 1000);
+        }
+      });
+
+      return unlisten;
+    };
+
+    let unlisten: (() => void) | undefined;
+
+    setupListener().then((fn) => {
+      unlisten = fn;
+    });
+
+    return () => {
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, []);
 
   const handleChange =
     (field: keyof NewSessionFormData) => (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -55,6 +92,22 @@ export function NewSessionDialog({ open, onOpenChange }: NewSessionDialogProps) 
         setErrors((prev) => ({ ...prev, [field]: undefined }));
       }
     };
+
+  const handleBrowse = async () => {
+    const selected = await openDialog({
+      directory: true,
+      multiple: false,
+      title: 'Select Repository Directory',
+    });
+
+    if (selected && typeof selected === 'string') {
+      setFormData((prev) => ({ ...prev, local_repo_path: selected }));
+      // Clear error for this field
+      if (errors.local_repo_path) {
+        setErrors((prev) => ({ ...prev, local_repo_path: undefined }));
+      }
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -114,8 +167,16 @@ export function NewSessionDialog({ open, onOpenChange }: NewSessionDialogProps) 
           </div>
         )}
 
+        {/* Progress indicator */}
+        {progressMessage && (
+          <div className="flex items-center gap-3 p-3 rounded-md bg-blue-50 border border-blue-200">
+            <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
+            <p className="text-sm text-blue-800">{progressMessage}</p>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit}>
-          <div className="space-y-4 py-4">
+          <div className="space-y-6 py-6">
             {/* General Error */}
             {errors.general && (
               <div className="flex items-start gap-3 p-3 rounded-md bg-red-50 border border-red-200">
@@ -126,11 +187,12 @@ export function NewSessionDialog({ open, onOpenChange }: NewSessionDialogProps) 
 
             {/* Session Name */}
             <div className="space-y-2">
-              <Label htmlFor="name">
+              <Label htmlFor="name" className="text-sm font-normal text-foreground">
                 Session Name <span className="text-destructive">*</span>
               </Label>
               <Input
                 id="name"
+                tabIndex={1}
                 placeholder="e.g., feature-auth-refactor"
                 value={formData.name}
                 onChange={handleChange('name')}
@@ -146,34 +208,41 @@ export function NewSessionDialog({ open, onOpenChange }: NewSessionDialogProps) 
 
             {/* Repository Path */}
             <div className="space-y-2">
-              <Label htmlFor="repo-path">
+              <Label htmlFor="repo-path" className="text-sm font-normal text-foreground">
                 Repository Path <span className="text-destructive">*</span>
               </Label>
-              <Input
-                id="repo-path"
-                placeholder="/Users/you/projects/myapp"
-                value={formData.local_repo_path}
-                onChange={handleChange('local_repo_path')}
-                aria-invalid={!!errors.local_repo_path}
-                aria-describedby={errors.local_repo_path ? 'repo-path-error' : undefined}
-              />
+              <div className="flex gap-2">
+                <Input
+                  id="repo-path"
+                  placeholder="Click Browse to select directory"
+                  value={formData.local_repo_path}
+                  readOnly
+                  aria-invalid={!!errors.local_repo_path}
+                  aria-describedby={errors.local_repo_path ? 'repo-path-error' : undefined}
+                  className="flex-1"
+                />
+                <Button type="button" variant="outline" onClick={handleBrowse} tabIndex={2}>
+                  Browse
+                </Button>
+              </div>
               {errors.local_repo_path && (
                 <p id="repo-path-error" className="text-sm text-destructive">
                   {errors.local_repo_path}
                 </p>
               )}
               <p className="text-xs text-muted-foreground">
-                Absolute path to your local Git repository
+                Select a local Git repository directory
               </p>
             </div>
 
             {/* Base Branch */}
             <div className="space-y-2">
-              <Label htmlFor="branch">
+              <Label htmlFor="branch" className="text-sm font-normal text-foreground">
                 Base Branch <span className="text-destructive">*</span>
               </Label>
               <Input
                 id="branch"
+                tabIndex={3}
                 placeholder="main"
                 value={formData.base_branch}
                 onChange={handleChange('base_branch')}
@@ -189,10 +258,14 @@ export function NewSessionDialog({ open, onOpenChange }: NewSessionDialogProps) 
           </div>
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={handleClose}>
+            <Button type="button" variant="outline" onClick={handleClose} tabIndex={4}>
               Cancel
             </Button>
-            <Button type="submit" disabled={createSession.isPending || !dockerAvailable}>
+            <Button
+              type="submit"
+              disabled={createSession.isPending || !dockerAvailable}
+              tabIndex={5}
+            >
               {createSession.isPending ? 'Creating...' : 'Create Session'}
             </Button>
           </DialogFooter>

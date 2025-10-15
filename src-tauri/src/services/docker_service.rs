@@ -1,10 +1,11 @@
 use anyhow::{anyhow, Result};
 use bollard::container::{
-    Config, CreateContainerOptions, RemoveContainerOptions, StartContainerOptions,
+    Config, CreateContainerOptions, LogsOptions, RemoveContainerOptions, StartContainerOptions,
     StopContainerOptions,
 };
 use bollard::models::HostConfig;
 use bollard::Docker;
+use futures_util::stream::StreamExt;
 
 /// Docker service for managing Claude Code session containers
 #[derive(Debug)]
@@ -158,6 +159,27 @@ impl DockerService {
             .await
             .map_err(|e| anyhow!("Failed to remove container {container_id}: {e}"))?;
         Ok(())
+    }
+
+    /// Get container logs (last 100 lines)
+    pub async fn get_logs(&self, container_id: &str) -> Result<String> {
+        let options = LogsOptions::<String> {
+            stdout: true,
+            stderr: true,
+            tail: "100".to_string(),
+            ..Default::default()
+        };
+
+        let mut log_stream = self.client.logs(container_id, Some(options));
+        let mut logs = String::new();
+
+        while let Some(log) = log_stream.next().await {
+            if let Ok(log_line) = log {
+                logs.push_str(&log_line.to_string());
+            }
+        }
+
+        Ok(logs)
     }
 }
 

@@ -39,6 +39,9 @@ pub fn run() {
                 .level(log_level)
                 .build(),
         )
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::default().build())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .invoke_handler(tauri::generate_handler![
             // Legacy commands
             greet,
@@ -52,6 +55,8 @@ pub fn run() {
             create_session,
             list_sessions,
             delete_session,
+            get_container_logs,
+            open_container_terminal,
         ])
         .setup(|app| {
             log::info!("Starting Opslane v{}", env!("CARGO_PKG_VERSION"));
@@ -61,6 +66,12 @@ pub fn run() {
                     Ok(state) => {
                         app.manage(state);
                         log::info!("Application ready");
+
+                        // Show window after state restored (prevents flash)
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                        }
+
                         Ok(())
                     }
                     Err(e) => {
