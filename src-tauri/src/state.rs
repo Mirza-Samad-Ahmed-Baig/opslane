@@ -1,5 +1,5 @@
 use crate::database::Database;
-use crate::services::DockerService;
+use crate::services::{DockerService, SessionManager};
 use std::sync::Arc;
 
 /// Global application state
@@ -7,10 +7,13 @@ pub struct AppState {
     /// Database connection pool
     pub db: Arc<Database>,
 
-    /// Docker service for container management (Phase 1)
-    /// Will be used by SessionManager in Phase 3
-    #[allow(dead_code)]
-    pub docker: Option<Arc<DockerService>>,
+    /// Docker service for container management
+    #[allow(dead_code)] // Will be used in Tauri commands (Phase 4)
+    pub docker: Arc<DockerService>,
+
+    /// Session manager for orchestrating DB + Docker
+    #[allow(dead_code)] // Will be used in Tauri commands (Phase 4)
+    pub session_manager: Arc<SessionManager>,
 }
 
 impl AppState {
@@ -22,34 +25,38 @@ impl AppState {
         let db = Database::init()
             .await
             .map_err(|e| format!("Failed to initialize database: {e}"))?;
+        let db = Arc::new(db);
 
-        // Initialize Docker service (optional - app can run without it for now)
-        let docker = match DockerService::new() {
-            Ok(service) => match service.check_available().await {
-                Ok(_) => {
-                    log::info!("Docker daemon is available");
-                    Some(Arc::new(service))
-                }
-                Err(e) => {
-                    log::error!("Docker daemon not responding: {e}");
-                    log::error!("Please ensure Docker Desktop is running");
-                    log::warn!("Application will start without Docker support");
-                    None
-                }
-            },
-            Err(e) => {
-                log::error!("Failed to connect to Docker: {e}");
-                log::error!("Docker is required for session management");
-                log::warn!("Application will start without Docker support");
-                None
-            }
-        };
+        // Initialize Docker service
+        let docker = DockerService::new()
+            .map_err(|e| format!("Failed to initialize Docker service: {e}"))?;
+        let docker = Arc::new(docker);
+
+        // Check Docker availability
+        docker
+            .check_available()
+            .await
+            .map_err(|e| format!("Docker daemon not available: {e}"))?;
+
+        // Initialize session manager with default resource limits
+        // TODO: Load these from settings table
+        let default_cpu_limit = 1.0;
+        let default_memory_limit_mb = 2048;
+
+        let session_manager = SessionManager::new(
+            Arc::clone(&db),
+            Arc::clone(&docker),
+            default_cpu_limit,
+            default_memory_limit_mb,
+        );
+        let session_manager = Arc::new(session_manager);
 
         log::info!("Application state initialized successfully");
 
         Ok(Self {
-            db: Arc::new(db),
+            db,
             docker,
+            session_manager,
         })
     }
 }

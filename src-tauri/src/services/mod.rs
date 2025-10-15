@@ -1,7 +1,8 @@
 pub mod docker_service;
+pub mod session_manager;
 
 // Future services:
 // - git_service.rs (Phase 1.3)
-// - session_manager.rs (Phase 1.4)
 
 pub use docker_service::DockerService;
+pub use session_manager::SessionManager;
