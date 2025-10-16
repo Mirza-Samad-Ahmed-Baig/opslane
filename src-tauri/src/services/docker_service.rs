@@ -49,7 +49,6 @@ impl DockerService {
     /// # Arguments
     /// * `container_name` - Name for the container (e.g., "opslane-session-550e8400")
     /// * `repo_path` - Absolute path to repository on host
-    /// * `volume_name` - Optional Docker volume name for session persistence
     /// * `cpu_limit` - CPU cores (e.g., 1.0)
     /// * `memory_limit_mb` - Memory limit in MB (e.g., 2048)
     ///
@@ -63,7 +62,6 @@ impl DockerService {
         &self,
         container_name: &str,
         repo_path: &str,
-        volume_name: Option<&str>,
         cpu_limit: f64,
         memory_limit_mb: i64,
     ) -> Result<String> {
@@ -96,14 +94,25 @@ impl DockerService {
         let nano_cpus = (cpu_limit * 1_000_000_000.0) as i64;
         let memory_bytes = memory_limit_mb * 1024 * 1024;
 
-        // Configure volume mounts
-        let mut bindings = vec![format!("{}:/workspace/repo:rw", repo_path_buf.display())];
+        // Get host .claude directory
+        let home_dir = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE")) // Windows fallback
+            .map_err(|_| anyhow!("Could not determine home directory"))?;
+        let claude_dir = format!("{home_dir}/.claude");
 
-        // Mount session volume if provided
-        if let Some(vol) = volume_name {
-            bindings.push(format!("{vol}:/home/claude/.claude:rw"));
-            log::info!("Mounting volume {vol} to /home/claude/.claude");
-        }
+        // Ensure .claude directory exists on host (create_dir_all is idempotent and thread-safe)
+        std::fs::create_dir_all(&claude_dir)
+            .map_err(|e| anyhow!("Failed to create .claude directory: {e}"))?;
+
+        log::debug!("Ensured .claude directory exists at {claude_dir}");
+
+        // Configure bind mounts
+        let bindings = vec![
+            format!("{}:/workspace/repo:rw", repo_path_buf.display()),
+            format!("{claude_dir}:/home/claude/.claude:rw"),
+        ];
+
+        log::info!("Mounting host {claude_dir} to /home/claude/.claude");
 
         let host_config = HostConfig {
             binds: Some(bindings),
@@ -308,100 +317,6 @@ impl DockerService {
 
         Ok(output)
     }
-
-    /// Create a named volume for session persistence
-    ///
-    /// # Arguments
-    /// * `session_id` - Full session UUID (must be valid UUID format)
-    ///
-    /// # Returns
-    /// Volume name (format: "opslane-session-{first-12-chars}")
-    ///
-    /// # Errors
-    /// Returns error if session_id is not a valid UUID or volume creation fails
-    #[allow(dead_code)] // Will be used in Phase 3
-    pub async fn create_session_volume(&self, session_id: &str) -> Result<String> {
-        use bollard::volume::CreateVolumeOptions;
-        use std::collections::HashMap;
-
-        // Validate UUID format (basic check: length and hyphens)
-        if session_id.len() < 36 || session_id.chars().nth(8) != Some('-') {
-            return Err(anyhow!("Invalid session_id format: must be a valid UUID"));
-        }
-
-        // Use first 12 chars of UUID for volume names (2^48 possibilities, reduces collision risk)
-        // This balances readability with collision prevention
-        let short_id = &session_id[..12];
-
-        let volume_name = format!("opslane-session-{short_id}");
-
-        let mut labels = HashMap::new();
-        labels.insert("com.opslane.session-id".to_string(), session_id.to_string());
-        labels.insert("com.opslane.managed".to_string(), "true".to_string());
-
-        let config = CreateVolumeOptions {
-            name: volume_name.clone(),
-            driver: "local".to_string(),
-            labels,
-            ..Default::default()
-        };
-
-        self.client
-            .create_volume(config)
-            .await
-            .map_err(|e| anyhow!("Failed to create volume {volume_name}: {e}"))?;
-
-        log::info!("Created Docker volume: {volume_name}");
-        Ok(volume_name)
-    }
-
-    /// Remove a session volume
-    ///
-    /// # Arguments
-    /// * `volume_name` - Volume name to remove
-    ///
-    /// # Safety
-    /// This method uses force removal (`force: true`), which will remove the volume
-    /// even if it's currently in use by a container. This is intentional for cleanup
-    /// during session deletion, but callers should ensure containers are stopped first
-    /// to prevent data corruption.
-    ///
-    /// # Errors
-    /// Returns error if volume removal fails or volume doesn't exist
-    #[allow(dead_code)] // Will be used in Phase 3
-    pub async fn remove_volume(&self, volume_name: &str) -> Result<()> {
-        use bollard::volume::RemoveVolumeOptions;
-
-        log::warn!("Force removing Docker volume: {volume_name}");
-
-        self.client
-            .remove_volume(volume_name, Some(RemoveVolumeOptions { force: true }))
-            .await
-            .map_err(|e| anyhow!("Failed to remove volume {volume_name}: {e}"))?;
-
-        log::info!("Removed Docker volume: {volume_name}");
-        Ok(())
-    }
-
-    /// Check if a volume exists
-    #[allow(dead_code)] // Will be used in Phase 3
-    pub async fn volume_exists(&self, volume_name: &str) -> Result<bool> {
-        use bollard::volume::ListVolumesOptions;
-        use std::collections::HashMap;
-
-        let mut filters = HashMap::new();
-        filters.insert("name".to_string(), vec![volume_name.to_string()]);
-
-        let options = Some(ListVolumesOptions { filters });
-
-        let volumes = self
-            .client
-            .list_volumes(options)
-            .await
-            .map_err(|e| anyhow!("Failed to list volumes: {e}"))?;
-
-        Ok(volumes.volumes.is_some_and(|v| !v.is_empty()))
-    }
 }
 
 #[cfg(test)]
@@ -450,16 +365,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_volume_name_format() {
-        // Test volume naming convention (12 chars for collision prevention)
-        let uuid = "550e8400-e29b-41d4-a716-446655440000";
-        let short_uuid = &uuid[..12];
-        let volume_name = format!("opslane-session-{short_uuid}");
-        assert_eq!(volume_name, "opslane-session-550e8400-e29");
-        assert_eq!(volume_name.len(), 28); // "opslane-session-" (16) + 12 chars
-    }
-
-    #[tokio::test]
     async fn test_uuid_validation() {
         // Valid UUID format
         let valid_uuid = "550e8400-e29b-41d4-a716-446655440000";
@@ -498,65 +403,20 @@ mod tests {
         assert!((4..=1_048_576).contains(&1_048_576i64));
     }
 
-    // Phase 4: Volume Management Tests
-
     #[tokio::test]
     #[cfg_attr(not(feature = "integration-tests"), ignore = "requires Docker daemon")]
-    async fn test_create_and_remove_volume() {
+    async fn test_container_with_host_mount() {
         let docker = DockerService::new().expect("Docker service creation failed");
-        let session_id = "550e8400-e29b-41d4-a716-446655440000";
-
-        // Create volume
-        let volume_name = docker
-            .create_session_volume(session_id)
-            .await
-            .expect("Volume creation failed");
-
-        assert_eq!(volume_name, "opslane-session-550e8400-e29");
-
-        // Verify volume exists
-        let exists = docker
-            .volume_exists(&volume_name)
-            .await
-            .expect("Volume check failed");
-        assert!(exists, "Volume should exist after creation");
-
-        // Remove volume
-        docker
-            .remove_volume(&volume_name)
-            .await
-            .expect("Volume removal failed");
-
-        // Verify volume removed
-        let exists = docker
-            .volume_exists(&volume_name)
-            .await
-            .expect("Volume check failed");
-        assert!(!exists, "Volume should not exist after removal");
-    }
-
-    #[tokio::test]
-    #[cfg_attr(not(feature = "integration-tests"), ignore = "requires Docker daemon")]
-    async fn test_container_with_volume_mount() {
-        let docker = DockerService::new().expect("Docker service creation failed");
-        let session_id = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
-
-        // Create volume
-        let volume_name = docker
-            .create_session_volume(session_id)
-            .await
-            .expect("Volume creation failed");
 
         // Create temporary test directory
         let temp_dir = std::env::temp_dir().join("opslane-test-repo");
         std::fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
 
-        // Create container with volume
+        // Create container with host .claude mount
         let container_id = docker
             .create_container(
-                "opslane-test-volume-mount",
+                "opslane-test-host-mount",
                 temp_dir.to_str().unwrap(),
-                Some(&volume_name),
                 1.0,
                 512,
             )
@@ -567,41 +427,12 @@ mod tests {
         if let Err(e) = docker.remove_container(&container_id).await {
             log::warn!("Failed to cleanup container in test: {e}");
         }
-        if let Err(e) = docker.remove_volume(&volume_name).await {
-            log::warn!("Failed to cleanup volume in test: {e}");
-        }
         if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
             log::warn!("Failed to cleanup temp directory in test: {e}");
         }
 
         // Test passes if we got here without errors
         assert!(!container_id.is_empty());
-    }
-
-    #[tokio::test]
-    #[cfg_attr(not(feature = "integration-tests"), ignore = "requires Docker daemon")]
-    async fn test_invalid_session_id_format() {
-        let docker = match DockerService::new() {
-            Ok(d) => d,
-            Err(_) => {
-                // Skip test if Docker is not available
-                // This allows the test to be ignored gracefully in CI/CD
-                return;
-            }
-        };
-
-        // Too short
-        let result = docker.create_session_volume("short").await;
-        assert!(result.is_err(), "Should reject session_id that's too short");
-
-        // Missing hyphen at position 8
-        let result = docker
-            .create_session_volume("550e8400ae29b41d4a716446655440000")
-            .await;
-        assert!(
-            result.is_err(),
-            "Should reject session_id without hyphen at position 8"
-        );
     }
 
     // Phase 2: Container Exec Tests
@@ -617,7 +448,7 @@ mod tests {
 
         // Create a test container
         let container_id = service
-            .create_container("test-exec", temp_dir.to_str().unwrap(), None, 1.0, 512)
+            .create_container("test-exec", temp_dir.to_str().unwrap(), 1.0, 512)
             .await
             .expect("Failed to create container");
 
@@ -651,13 +482,7 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
 
         let container_id = service
-            .create_container(
-                "test-exec-stream",
-                temp_dir.to_str().unwrap(),
-                None,
-                1.0,
-                512,
-            )
+            .create_container("test-exec-stream", temp_dir.to_str().unwrap(), 1.0, 512)
             .await
             .expect("Failed to create container");
 

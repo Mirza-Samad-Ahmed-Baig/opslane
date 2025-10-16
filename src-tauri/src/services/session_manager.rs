@@ -63,55 +63,6 @@ impl SessionManager {
 
         log::info!("Created session {} in database", session.id);
 
-        // Emit progress: Creating volume
-        let _ = app_handle.emit(
-            "session-progress",
-            json!({
-                "session_id": &session.id,
-                "status": "creating",
-                "message": "Creating Docker volume..."
-            }),
-        );
-
-        // Step 2: Create Docker volume for session persistence
-        let volume_name = match self.docker.create_session_volume(&session.id).await {
-            Ok(name) => {
-                log::info!("Created volume {} for session {}", name, session.id);
-                name
-            }
-            Err(e) => {
-                let error_msg = format!("Failed to create volume: {e}");
-                log::error!("{error_msg}");
-
-                if let Err(db_err) = self.db.update_session_status(&session.id, "error").await {
-                    log::error!("Failed to update session status: {db_err}");
-                }
-
-                return Err(anyhow!(error_msg));
-            }
-        };
-
-        // Step 3: Update session with volume name
-        if let Err(e) = self
-            .db
-            .update_session_volume(&session.id, &volume_name)
-            .await
-        {
-            let error_msg = format!("Failed to update session volume: {e}");
-            log::error!("{error_msg}");
-
-            // Cleanup: Remove the volume we just created
-            if let Err(cleanup_err) = self.docker.remove_volume(&volume_name).await {
-                log::warn!("Failed to cleanup volume after DB error: {cleanup_err}");
-            }
-
-            if let Err(db_err) = self.db.update_session_status(&session.id, "error").await {
-                log::error!("Failed to update session status: {db_err}");
-            }
-
-            return Err(anyhow!(error_msg));
-        }
-
         // Emit progress: Creating container
         let _ = app_handle.emit(
             "session-progress",
@@ -129,13 +80,12 @@ impl SessionManager {
         let cpu_limit = self.default_cpu_limit; // TODO: Get from session once settings are implemented
         let memory_limit_mb = self.default_memory_limit_mb;
 
-        // Step 4: Create container with volume mounted
+        // Step 2: Create container with host .claude mounted
         let container_id = match self
             .docker
             .create_container(
                 &container_name,
                 &session.local_repo_path,
-                Some(&volume_name), // Mount the session volume
                 cpu_limit,
                 memory_limit_mb,
             )
@@ -149,13 +99,6 @@ impl SessionManager {
                 // Update DB with error
                 let error_msg = format!("Failed to create container: {e}");
                 log::error!("{error_msg}");
-
-                // Cleanup: Remove the volume since container creation failed
-                if let Err(cleanup_err) = self.docker.remove_volume(&volume_name).await {
-                    log::warn!(
-                        "Failed to cleanup volume after container creation failure: {cleanup_err}"
-                    );
-                }
 
                 if let Err(db_err) = self.db.update_session_status(&session.id, "error").await {
                     log::error!("Failed to update session status: {db_err}");
@@ -175,7 +118,7 @@ impl SessionManager {
             }),
         );
 
-        // Step 5: Start container
+        // Step 3: Start container
         if let Err(e) = self.docker.start_container(&container_id).await {
             let error_msg = format!("Failed to start container: {e}");
             log::error!("{error_msg}");
@@ -183,11 +126,6 @@ impl SessionManager {
             // Try to clean up container
             if let Err(cleanup_err) = self.docker.remove_container(&container_id).await {
                 log::error!("Failed to cleanup container after start failure: {cleanup_err}");
-            }
-
-            // Try to clean up volume
-            if let Err(cleanup_err) = self.docker.remove_volume(&volume_name).await {
-                log::warn!("Failed to cleanup volume after start failure: {cleanup_err}");
             }
 
             // Update DB with error
@@ -204,7 +142,7 @@ impl SessionManager {
             session.id
         );
 
-        // Step 6: Update database with container info and set status to "ready"
+        // Step 4: Update database with container info and set status to "ready"
         if let Err(e) = self
             .db
             .update_session_container(&session.id, &container_id, &container_name, "main")
@@ -218,10 +156,6 @@ impl SessionManager {
             }
             if let Err(rm_err) = self.docker.remove_container(&container_id).await {
                 log::error!("Failed to remove container: {rm_err}");
-            }
-            // Try to clean up volume
-            if let Err(cleanup_err) = self.docker.remove_volume(&volume_name).await {
-                log::warn!("Failed to cleanup volume after DB update failure: {cleanup_err}");
             }
             // Update session status to error
             if let Err(db_err) = self.db.update_session_status(&session.id, "error").await {
@@ -298,11 +232,12 @@ impl SessionManager {
     /// 1. Get session details
     /// 2. Stop container (if running)
     /// 3. Remove container
-    /// 4. Remove Docker volume
-    /// 5. Soft delete in database (is_deleted=1)
+    /// 4. Soft delete in database (is_deleted=1)
+    ///
+    /// Note: Session data in ~/.claude persists on host after deletion
     #[allow(dead_code)] // Will be called from Tauri commands (Phase 4)
     pub async fn delete_session(&self, session_id: &str) -> Result<()> {
-        // Get session to find container ID and volume name
+        // Get session to find container ID
         let session = self
             .db
             .get_session(session_id)
@@ -327,23 +262,13 @@ impl SessionManager {
             }
         }
 
-        // Step 2: Remove Docker volume
-        if let Some(volume_name) = &session.volume_name {
-            log::info!("Removing volume {volume_name} for session {session_id}");
-
-            match self.docker.remove_volume(volume_name).await {
-                Ok(_) => log::info!("Volume {volume_name} removed successfully"),
-                Err(e) => log::warn!("Failed to remove volume {volume_name}: {e}"),
-            }
-        }
-
-        // Step 3: Soft delete in database
+        // Step 2: Soft delete in database
         self.db
             .delete_session(session_id)
             .await
             .map_err(|e| anyhow!("Failed to delete session in database: {e}"))?;
 
-        log::info!("Session {session_id} deleted");
+        log::info!("Session {session_id} deleted (host .claude data persists)");
         Ok(())
     }
 }
