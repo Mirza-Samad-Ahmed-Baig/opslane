@@ -285,6 +285,232 @@ impl Database {
 
         Ok(())
     }
+
+    // ===== Project Methods =====
+
+    /// Create a new project
+    #[allow(dead_code)]
+    pub async fn create_project(
+        &self,
+        new: crate::models::NewProject,
+    ) -> Result<crate::models::Project> {
+        use uuid::Uuid;
+
+        // Validate input
+        new.validate()
+            .map_err(|e| anyhow::anyhow!("Validation error: {e}"))?;
+
+        let id = Uuid::new_v4().to_string();
+
+        // Get next order_index
+        let max_order: Option<i32> = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(order_index), -1) FROM projects WHERE session_id = ? AND is_deleted = 0"
+        )
+        .bind(&new.session_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let order_index = max_order.unwrap_or(-1) + 1;
+
+        let project = sqlx::query_as::<_, crate::models::Project>(
+            r#"
+            INSERT INTO projects (
+                id, session_id, name, description, order_index, is_deleted
+            ) VALUES (?, ?, ?, ?, ?, 0)
+            RETURNING id, session_id, name, description, order_index, created_at, updated_at, is_deleted
+            "#,
+        )
+        .bind(&id)
+        .bind(&new.session_id)
+        .bind(&new.name)
+        .bind(&new.description)
+        .bind(order_index)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(project)
+    }
+
+    /// Get all projects for a session
+    #[allow(dead_code)]
+    pub async fn get_session_projects(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<crate::models::Project>> {
+        let projects = sqlx::query_as::<_, crate::models::Project>(
+            r#"
+            SELECT id, session_id, name, description, order_index, created_at, updated_at, is_deleted
+            FROM projects
+            WHERE session_id = ? AND is_deleted = 0
+            ORDER BY order_index ASC
+            "#,
+        )
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(projects)
+    }
+
+    /// Get a single project by ID
+    #[allow(dead_code)]
+    pub async fn get_project(&self, id: &str) -> Result<crate::models::Project> {
+        let project = sqlx::query_as::<_, crate::models::Project>(
+            r#"
+            SELECT id, session_id, name, description, order_index, created_at, updated_at, is_deleted
+            FROM projects
+            WHERE id = ?
+            "#,
+        )
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(project)
+    }
+
+    /// Delete project (soft delete)
+    #[allow(dead_code)]
+    pub async fn delete_project(&self, id: &str) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE projects
+            SET is_deleted = 1
+            WHERE id = ?
+            "#,
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    // ===== Task Methods =====
+
+    /// Create a new task
+    #[allow(dead_code)]
+    pub async fn create_task(&self, new: crate::models::NewTask) -> Result<crate::models::Task> {
+        use uuid::Uuid;
+
+        // Validate input
+        new.validate()
+            .map_err(|e| anyhow::anyhow!("Validation error: {e}"))?;
+
+        let id = Uuid::new_v4().to_string();
+
+        // Get next order_index
+        let max_order: Option<i32> = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(order_index), -1) FROM tasks WHERE project_id = ? AND is_deleted = 0"
+        )
+        .bind(&new.project_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let order_index = max_order.unwrap_or(-1) + 1;
+
+        let task = sqlx::query_as::<_, crate::models::Task>(
+            r#"
+            INSERT INTO tasks (
+                id, project_id, name, status, order_index, is_deleted
+            ) VALUES (?, ?, ?, 'pending', ?, 0)
+            RETURNING id, project_id, name, status, order_index, created_at, updated_at, completed_at, is_deleted
+            "#,
+        )
+        .bind(&id)
+        .bind(&new.project_id)
+        .bind(&new.name)
+        .bind(order_index)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(task)
+    }
+
+    /// Get all tasks for a project
+    #[allow(dead_code)]
+    pub async fn get_project_tasks(&self, project_id: &str) -> Result<Vec<crate::models::Task>> {
+        let tasks = sqlx::query_as::<_, crate::models::Task>(
+            r#"
+            SELECT id, project_id, name, status, order_index, created_at, updated_at, completed_at, is_deleted
+            FROM tasks
+            WHERE project_id = ? AND is_deleted = 0
+            ORDER BY order_index ASC
+            "#,
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(tasks)
+    }
+
+    /// Get a single task by ID
+    #[allow(dead_code)]
+    pub async fn get_task(&self, id: &str) -> Result<crate::models::Task> {
+        let task = sqlx::query_as::<_, crate::models::Task>(
+            r#"
+            SELECT id, project_id, name, status, order_index, created_at, updated_at, completed_at, is_deleted
+            FROM tasks
+            WHERE id = ?
+            "#,
+        )
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(task)
+    }
+
+    /// Update task status
+    #[allow(dead_code)]
+    pub async fn update_task_status(&self, id: &str, status: &str) -> Result<crate::models::Task> {
+        // Validate status
+        if !crate::models::Task::is_valid_status(status) {
+            return Err(anyhow::anyhow!("Invalid status: {status}"));
+        }
+
+        // Use CASE expression to safely set completed_at based on status
+        // This avoids string concatenation and SQL injection risks
+        let task = sqlx::query_as::<_, crate::models::Task>(
+            r#"
+            UPDATE tasks
+            SET
+                status = ?,
+                completed_at = CASE
+                    WHEN ? = 'completed' THEN datetime('now')
+                    ELSE NULL
+                END,
+                updated_at = datetime('now')
+            WHERE id = ?
+            RETURNING id, project_id, name, status, order_index, created_at, updated_at, completed_at, is_deleted
+            "#,
+        )
+        .bind(status)
+        .bind(status)
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(task)
+    }
+
+    /// Delete task (soft delete)
+    #[allow(dead_code)]
+    pub async fn delete_task(&self, id: &str) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE tasks
+            SET is_deleted = 1
+            WHERE id = ?
+            "#,
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -60,6 +60,17 @@ pub fn run() {
             // Message commands
             send_message,
             get_messages,
+            // Project commands
+            get_session_projects,
+            create_project,
+            delete_project,
+            // Task commands
+            get_project_tasks,
+            create_task,
+            update_task_status,
+            delete_task,
+            // Change tracking commands
+            get_session_changes,
         ])
         .setup(|app| {
             log::info!("Starting Opslane v{}", env!("CARGO_PKG_VERSION"));
