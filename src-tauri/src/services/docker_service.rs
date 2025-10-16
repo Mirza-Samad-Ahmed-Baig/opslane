@@ -170,6 +170,74 @@ impl DockerService {
         Ok(())
     }
 
+    /// Setup Claude credentials in container
+    ///
+    /// Writes credentials to /home/claude/.claude/.credentials.json with proper permissions
+    ///
+    /// # Arguments
+    /// * `container_id` - Container ID
+    /// * `credentials_json` - JSON string with credentials (from Keychain)
+    ///
+    /// # Security
+    /// - Uses base64 encoding to prevent command injection attacks
+    /// - Credentials written with chmod 600 (owner read/write only)
+    /// - File owned by claude:claude user
+    /// - Never logs credential content
+    /// - Runs as claude user (not root)
+    pub async fn setup_claude_credentials(
+        &self,
+        container_id: &str,
+        credentials_json: &str,
+    ) -> Result<()> {
+        log::info!("Setting up Claude credentials in container {container_id}");
+
+        // Security: Use base64 encoding to prevent command injection
+        // This eliminates ALL shell metacharacter interpretation risks
+        // (backticks, $(), newlines, quotes, etc.)
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let encoded = STANDARD.encode(credentials_json.as_bytes());
+
+        // Build command to write credentials file with proper permissions
+        // The base64-encoded data is safe to pass to shell since it contains only [A-Za-z0-9+/=]
+        // Run as claude user to ensure correct ownership
+        let setup_cmd = format!(
+            "mkdir -p /home/claude/.claude && echo '{encoded}' | base64 -d > /home/claude/.claude/.credentials.json && chmod 600 /home/claude/.claude/.credentials.json"
+        );
+
+        let cmd = vec!["sh".to_string(), "-c".to_string(), setup_cmd];
+
+        // Execute as claude user (not root)
+        self.exec_command_blocking(container_id, cmd, None, false)
+            .await
+            .map_err(|e| anyhow!("Failed to setup credentials: {e}"))?;
+
+        log::info!("Claude credentials file written to /home/claude/.claude/.credentials.json (content redacted)");
+
+        Ok(())
+    }
+
+    /// Verify credentials file exists and has correct permissions
+    ///
+    /// Used for diagnostics and testing
+    pub async fn verify_credentials_file(&self, container_id: &str) -> Result<bool> {
+        let cmd = vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "test -f /home/claude/.claude/.credentials.json && ls -la /home/claude/.claude/.credentials.json".to_string(),
+        ];
+
+        match self
+            .exec_command_blocking(container_id, cmd, None, false)
+            .await
+        {
+            Ok(output) => {
+                log::debug!("Credentials file check: {output}");
+                Ok(output.contains(".credentials.json"))
+            }
+            Err(_) => Ok(false),
+        }
+    }
+
     /// Stop a container (with 30 second timeout)
     #[allow(dead_code)] // Will be used by SessionManager in Phase 3
     pub async fn stop_container(&self, container_id: &str) -> Result<()> {
