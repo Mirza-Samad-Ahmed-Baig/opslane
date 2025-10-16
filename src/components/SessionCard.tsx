@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { invoke } from '@tauri-apps/api/core';
-import { Trash2, Loader2, Terminal, FileText } from 'lucide-react';
+import { Trash2, Loader2, FileText } from 'lucide-react';
 import type { Session } from '@/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -43,14 +42,6 @@ export function SessionCard({ session }: SessionCardProps) {
     setShowDeleteDialog(false);
   };
 
-  const handleOpenTerminal = async () => {
-    try {
-      await invoke('open_container_terminal', { sessionId: session.id });
-    } catch (error) {
-      console.error('Failed to open terminal:', error);
-    }
-  };
-
   return (
     <>
       <Link to={`/session/${session.id}`} className="block">
@@ -81,20 +72,6 @@ export function SessionCard({ session }: SessionCardProps) {
                   aria-label={`View logs for ${session.name}`}
                 >
                   <FileText className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    handleOpenTerminal();
-                  }}
-                  className="h-8 w-8"
-                  title="Open in Terminal"
-                  aria-label={`Open terminal for ${session.name}`}
-                >
-                  <Terminal className="h-4 w-4" />
                 </Button>
                 <Button
                   variant="ghost"

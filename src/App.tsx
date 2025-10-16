@@ -26,9 +26,14 @@ function HomePage() {
         // Register Cmd+N / Ctrl+N for new session
         await register('CommandOrControl+N', async (event) => {
           if (event.state === 'Pressed') {
-            // Focus window if not focused
-            const window = getCurrentWebviewWindow();
-            await window.setFocus();
+            // Focus window if not focused (ignore permission errors)
+            try {
+              const window = getCurrentWebviewWindow();
+              await window.setFocus();
+            } catch (err) {
+              // Silently ignore focus errors - window will still show dialog
+              logger.debug('Could not set window focus', err as Error);
+            }
             setShowNewDialog(true);
           }
         });
