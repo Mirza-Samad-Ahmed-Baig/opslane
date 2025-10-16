@@ -1,8 +1,9 @@
 use anyhow::{anyhow, Result};
 use bollard::container::{
-    Config, CreateContainerOptions, LogsOptions, RemoveContainerOptions, StartContainerOptions,
-    StopContainerOptions,
+    Config, CreateContainerOptions, LogOutput, LogsOptions, RemoveContainerOptions,
+    StartContainerOptions, StopContainerOptions,
 };
+use bollard::exec::{CreateExecOptions, StartExecResults};
 use bollard::models::HostConfig;
 use bollard::Docker;
 use futures_util::stream::StreamExt;
@@ -188,6 +189,93 @@ impl DockerService {
         }
 
         Ok(logs)
+    }
+
+    /// Execute a command in a running container and return streaming output
+    ///
+    /// # Arguments
+    /// * `container_id` - The container ID
+    /// * `cmd` - Command to execute as vector of strings (e.g., vec!["claude", "chat", "Hello"])
+    /// * `working_dir` - Optional working directory (defaults to container's WORKDIR)
+    ///
+    /// # Returns
+    /// Returns a stream of output chunks (stdout/stderr combined)
+    pub async fn exec_command(
+        &self,
+        container_id: &str,
+        cmd: Vec<String>,
+        working_dir: Option<String>,
+    ) -> Result<impl futures_util::Stream<Item = Result<String>>> {
+        // Create exec instance
+        let exec_config = CreateExecOptions {
+            attach_stdout: Some(true),
+            attach_stderr: Some(true),
+            tty: Some(false), // No TTY for easier parsing
+            cmd: Some(cmd.clone()),
+            working_dir,
+            ..Default::default()
+        };
+
+        let exec = self
+            .client
+            .create_exec(container_id, exec_config)
+            .await
+            .map_err(|e| anyhow!("Failed to create exec instance: {e}"))?;
+
+        log::info!("Created exec {} for command: {:?}", exec.id, cmd);
+
+        // Start exec and get output stream
+        let stream = self
+            .client
+            .start_exec(&exec.id, None)
+            .await
+            .map_err(|e| anyhow!("Failed to start exec: {e}"))?;
+
+        // Convert bollard stream to string stream
+        let output_stream = match stream {
+            StartExecResults::Attached { output, .. } => output.map(|chunk_result| {
+                chunk_result
+                    .map(|chunk| {
+                        // Convert LogOutput to String
+                        match chunk {
+                            LogOutput::StdOut { message } => {
+                                String::from_utf8_lossy(&message).to_string()
+                            }
+                            LogOutput::StdErr { message } => {
+                                String::from_utf8_lossy(&message).to_string()
+                            }
+                            LogOutput::Console { message } => {
+                                String::from_utf8_lossy(&message).to_string()
+                            }
+                            _ => String::new(),
+                        }
+                    })
+                    .map_err(|e| anyhow!("Stream error: {e}"))
+            }),
+            _ => {
+                return Err(anyhow!("Exec stream not attached"));
+            }
+        };
+
+        Ok(output_stream)
+    }
+
+    /// Execute a command in a container and wait for completion (non-streaming)
+    /// Useful for short commands where you want the full output
+    pub async fn exec_command_blocking(
+        &self,
+        container_id: &str,
+        cmd: Vec<String>,
+        working_dir: Option<String>,
+    ) -> Result<String> {
+        let mut stream = self.exec_command(container_id, cmd, working_dir).await?;
+        let mut output = String::new();
+
+        while let Some(chunk_result) = stream.next().await {
+            output.push_str(&chunk_result?);
+        }
+
+        Ok(output)
     }
 
     /// Create a named volume for session persistence
@@ -483,5 +571,101 @@ mod tests {
             result.is_err(),
             "Should reject session_id without hyphen at position 8"
         );
+    }
+
+    // Phase 2: Container Exec Tests
+
+    #[tokio::test]
+    #[cfg_attr(not(feature = "integration-tests"), ignore = "requires Docker daemon")]
+    async fn test_exec_command_echo() {
+        let service = DockerService::new().expect("Docker service init failed");
+
+        // Create temporary test directory
+        let temp_dir = std::env::temp_dir().join("opslane-test-exec");
+        std::fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
+
+        // Create a test container
+        let container_id = service
+            .create_container(
+                "test-exec",
+                temp_dir.to_str().unwrap(),
+                None,
+                1.0,
+                512,
+            )
+            .await
+            .expect("Failed to create container");
+
+        // Start container
+        service
+            .start_container(&container_id)
+            .await
+            .expect("Failed to start container");
+
+        // Execute echo command
+        let output = service
+            .exec_command_blocking(
+                &container_id,
+                vec!["echo".into(), "Hello".into()],
+                None,
+            )
+            .await
+            .expect("Failed to exec command");
+
+        assert!(output.contains("Hello"));
+
+        // Cleanup
+        let _ = service.stop_container(&container_id).await;
+        let _ = service.remove_container(&container_id).await;
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(feature = "integration-tests"), ignore = "requires Docker daemon")]
+    async fn test_exec_command_streaming() {
+        let service = DockerService::new().expect("Docker service init failed");
+
+        // Create temporary test directory
+        let temp_dir = std::env::temp_dir().join("opslane-test-exec-stream");
+        std::fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
+
+        let container_id = service
+            .create_container(
+                "test-exec-stream",
+                temp_dir.to_str().unwrap(),
+                None,
+                1.0,
+                512,
+            )
+            .await
+            .expect("Failed to create container");
+
+        service
+            .start_container(&container_id)
+            .await
+            .expect("Failed to start container");
+
+        // Execute command that produces multiple lines
+        let mut stream = service
+            .exec_command(
+                &container_id,
+                vec!["sh".into(), "-c".into(), "echo A && echo B".into()],
+                None,
+            )
+            .await
+            .expect("Failed to exec command");
+
+        let mut output = String::new();
+        while let Some(chunk_result) = stream.next().await {
+            output.push_str(&chunk_result.expect("Stream error"));
+        }
+
+        assert!(output.contains("A"));
+        assert!(output.contains("B"));
+
+        // Cleanup
+        let _ = service.stop_container(&container_id).await;
+        let _ = service.remove_container(&container_id).await;
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

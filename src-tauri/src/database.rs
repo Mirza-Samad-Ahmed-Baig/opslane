@@ -268,6 +268,23 @@ impl Database {
 
         Ok(())
     }
+
+    /// Update last activity timestamp for a session
+    #[allow(dead_code)]
+    pub async fn update_session_activity(&self, session_id: &str) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE sessions
+            SET last_activity_at = datetime('now'), updated_at = datetime('now')
+            WHERE id = ? AND is_deleted = 0
+            "#,
+        )
+        .bind(session_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

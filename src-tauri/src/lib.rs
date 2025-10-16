@@ -57,6 +57,9 @@ pub fn run() {
             delete_session,
             get_container_logs,
             open_container_terminal,
+            // Message commands
+            send_message,
+            get_messages,
         ])
         .setup(|app| {
             log::info!("Starting Opslane v{}", env!("CARGO_PKG_VERSION"));
