@@ -56,6 +56,16 @@ impl ClaudeService {
         session_id: &str,
         message: String,
     ) -> Result<mpsc::Receiver<StreamEvent>> {
+        // SECURITY: Validate message size to prevent resource exhaustion
+        const MAX_MESSAGE_SIZE: usize = 1024 * 1024; // 1MB limit
+        if message.len() > MAX_MESSAGE_SIZE {
+            return Err(anyhow!(
+                "Message too large: {} bytes (max: {} bytes)",
+                message.len(),
+                MAX_MESSAGE_SIZE
+            ));
+        }
+
         // Get session from database
         let session = self
             .db
@@ -100,9 +110,7 @@ impl ClaudeService {
             message.clone(),
         ];
 
-        log::info!(
-            "Executing Claude command in container {container_id}: {cmd:?}"
-        );
+        log::info!("Executing Claude command in container {container_id}: {cmd:?}");
 
         // Update last activity timestamp
         if let Err(e) = self.db.update_session_activity(session_id).await {
@@ -170,7 +178,10 @@ impl ClaudeService {
 
         // TODO Phase 3: Parse final output and save structured message to JSONL
         // For now, Claude's CLI will handle persistence in /home/claude/.claude/
-        log::info!("Claude response complete ({} bytes)", accumulated_text.len());
+        log::info!(
+            "Claude response complete ({} bytes)",
+            accumulated_text.len()
+        );
     }
 
     /// Get message history for a session by reading Claude's session files
@@ -197,13 +208,16 @@ impl ClaudeService {
             .claude_session_id
             .ok_or_else(|| anyhow!("No Claude session ID - no messages yet"))?;
 
-        // Read Claude's session file from container
-        let session_file_path = format!("/home/claude/.claude/sessions/{claude_session_id}/conversation.jsonl");
+        // Validate Claude session ID is a valid UUID to prevent command injection
+        uuid::Uuid::parse_str(&claude_session_id)
+            .map_err(|_| anyhow!("Invalid Claude session ID format: not a valid UUID"))?;
 
-        let cmd = vec![
-            "cat".to_string(),
-            session_file_path.clone(),
-        ];
+        // Read Claude's session file from container
+        // SECURITY: Path is safe because claude_session_id is validated as UUID above
+        let session_file_path =
+            format!("/home/claude/.claude/sessions/{claude_session_id}/conversation.jsonl");
+
+        let cmd = vec!["cat".to_string(), session_file_path.clone()];
 
         let output = self
             .docker

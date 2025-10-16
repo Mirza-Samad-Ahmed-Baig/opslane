@@ -18,7 +18,11 @@ pub async fn send_message(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    log::info!("send_message command: session={}, content_len={}", session_id, content.len());
+    log::info!(
+        "send_message command: session={}, content_len={}",
+        session_id,
+        content.len()
+    );
 
     // Start streaming from ClaudeService
     let mut rx = state

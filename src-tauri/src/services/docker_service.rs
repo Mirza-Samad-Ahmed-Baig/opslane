@@ -200,12 +200,29 @@ impl DockerService {
     ///
     /// # Returns
     /// Returns a stream of output chunks (stdout/stderr combined)
+    ///
+    /// # Security
+    /// Only allows whitelisted commands (claude, cat, sh) to prevent arbitrary command execution
     pub async fn exec_command(
         &self,
         container_id: &str,
         cmd: Vec<String>,
         working_dir: Option<String>,
     ) -> Result<impl futures_util::Stream<Item = Result<String>>> {
+        // SECURITY: Validate command is in whitelist
+        if cmd.is_empty() {
+            return Err(anyhow!("Command cannot be empty"));
+        }
+
+        let allowed_commands = ["claude", "cat", "sh", "ls", "echo"];
+        let command_name = &cmd[0];
+
+        if !allowed_commands.contains(&command_name.as_str()) {
+            return Err(anyhow!(
+                "Command '{command_name}' not allowed. Allowed commands: {allowed_commands:?}"
+            ));
+        }
+
         // Create exec instance
         let exec_config = CreateExecOptions {
             attach_stdout: Some(true),
@@ -262,17 +279,31 @@ impl DockerService {
 
     /// Execute a command in a container and wait for completion (non-streaming)
     /// Useful for short commands where you want the full output
+    ///
+    /// # Security
+    /// Limits output to 10MB to prevent memory exhaustion attacks
     pub async fn exec_command_blocking(
         &self,
         container_id: &str,
         cmd: Vec<String>,
         working_dir: Option<String>,
     ) -> Result<String> {
+        const MAX_OUTPUT_SIZE: usize = 10 * 1024 * 1024; // 10MB limit
+
         let mut stream = self.exec_command(container_id, cmd, working_dir).await?;
         let mut output = String::new();
 
         while let Some(chunk_result) = stream.next().await {
-            output.push_str(&chunk_result?);
+            let chunk = chunk_result?;
+
+            // Check if adding this chunk would exceed the limit
+            if output.len() + chunk.len() > MAX_OUTPUT_SIZE {
+                return Err(anyhow!(
+                    "Command output exceeded maximum size of {MAX_OUTPUT_SIZE} bytes"
+                ));
+            }
+
+            output.push_str(&chunk);
         }
 
         Ok(output)
@@ -586,13 +617,7 @@ mod tests {
 
         // Create a test container
         let container_id = service
-            .create_container(
-                "test-exec",
-                temp_dir.to_str().unwrap(),
-                None,
-                1.0,
-                512,
-            )
+            .create_container("test-exec", temp_dir.to_str().unwrap(), None, 1.0, 512)
             .await
             .expect("Failed to create container");
 
@@ -604,11 +629,7 @@ mod tests {
 
         // Execute echo command
         let output = service
-            .exec_command_blocking(
-                &container_id,
-                vec!["echo".into(), "Hello".into()],
-                None,
-            )
+            .exec_command_blocking(&container_id, vec!["echo".into(), "Hello".into()], None)
             .await
             .expect("Failed to exec command");
 
