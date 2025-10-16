@@ -71,6 +71,8 @@ pub fn run() {
             delete_task,
             // Change tracking commands
             get_session_changes,
+            // Credentials commands
+            get_claude_credentials,
         ])
         .setup(|app| {
             log::info!("Starting Opslane v{}", env!("CARGO_PKG_VERSION"));
