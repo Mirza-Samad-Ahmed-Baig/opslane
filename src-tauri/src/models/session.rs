@@ -55,6 +55,7 @@ pub struct NewSession {
     pub name: String,
     pub local_repo_path: String,
     pub base_branch: String,
+    pub initial_message: Option<String>, // Optional initial message to send to Claude
 }
 
 impl NewSession {

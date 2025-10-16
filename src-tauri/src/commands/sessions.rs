@@ -1,5 +1,6 @@
 use crate::models::{NewSession, Session};
 use crate::state::AppState;
+use std::sync::Arc;
 use tauri::{AppHandle, State};
 
 /// Create a new session with Docker container
@@ -11,14 +12,42 @@ pub async fn create_session(
 ) -> Result<Session, String> {
     log::info!("Creating session: {}", new_session.name);
 
-    state
+    // Store initial_message before creating session (it's consumed by create_session)
+    let initial_message = new_session.initial_message.clone();
+
+    let session = state
         .session_manager
         .create_session(new_session, app_handle)
         .await
         .map_err(|e| {
             log::error!("Failed to create session: {e}");
             format!("Failed to create session: {e}")
-        })
+        })?;
+
+    // If initial_message is provided, send it to Claude
+    if let Some(message) = initial_message {
+        log::info!(
+            "Sending initial message to session {}: {} chars",
+            session.id,
+            message.len()
+        );
+
+        // Send message asynchronously (don't wait for response)
+        let session_id = session.id.clone();
+        let claude_service = Arc::clone(&state.claude_service);
+        tokio::spawn(async move {
+            match claude_service.send_message(&session_id, message).await {
+                Ok(_) => {
+                    log::info!("Initial message sent successfully for session {session_id}");
+                }
+                Err(e) => {
+                    log::error!("Failed to send initial message for session {session_id}: {e}");
+                }
+            }
+        });
+    }
+
+    Ok(session)
 }
 
 /// Get a single session by ID

@@ -29,6 +29,7 @@ export interface NewSession {
   name: string;
   local_repo_path: string;
   base_branch: string;
+  initial_message?: string; // Optional initial message to send to Claude
 }
 
 /**
@@ -44,5 +45,6 @@ export interface SessionFormErrors {
   name?: string;
   local_repo_path?: string;
   base_branch?: string;
+  initial_message?: string; // For initial message validation
   general?: string; // For non-field-specific errors (e.g., Docker unavailability)
 }

@@ -1,56 +1,99 @@
-import { Loader2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { useNavigate } from 'react-router-dom';
+import { Loader2, FolderOpen, Circle } from 'lucide-react';
 import { useSessions } from '@/hooks';
-import { SessionCard } from './SessionCard';
-import { EmptyState } from './EmptyState';
+import { cn } from '@/lib/utils';
 
 interface SessionListProps {
   onCreateClick: () => void;
+  activeSessionId?: string;
 }
 
 /**
- * SessionList - Main container for displaying all sessions in a responsive grid
+ * SessionList - Left navigation showing sessions grouped by projects
  *
  * @param onCreateClick - Callback function to open the new session dialog
  *
  * Features:
- * - Loading state with spinner during initial fetch
- * - Error state with retry button for failed fetches
- * - Empty state when no sessions exist
- * - Responsive grid layout (1 col mobile, 2 tablet, 3 desktop)
+ * - Compact list format for left navigation
+ * - Project-based grouping (currently shows "Recent Sessions")
+ * - Status indicators with color-coded dots
+ * - Click to navigate to session detail
  * - Auto-refresh every 5 seconds via React Query
  */
-export function SessionList({ onCreateClick }: SessionListProps) {
-  const { data: sessions, isLoading, error, refetch } = useSessions();
+export function SessionList({ onCreateClick, activeSessionId }: SessionListProps) {
+  const navigate = useNavigate();
+  const { data: sessions, isLoading } = useSessions();
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center h-[400px] text-center gap-4">
-        <p className="text-sm text-destructive">Failed to load sessions. Please try again.</p>
-        <Button variant="outline" onClick={() => refetch()}>
-          Retry
-        </Button>
+      <div className="flex items-center justify-center p-8">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
       </div>
     );
   }
 
   if (!sessions || sessions.length === 0) {
-    return <EmptyState onCreateClick={onCreateClick} />;
+    return (
+      <div className="p-4">
+        <p className="text-xs text-muted-foreground mb-3">No sessions yet</p>
+        <button onClick={onCreateClick} className="text-xs text-primary hover:underline">
+          Create your first session
+        </button>
+      </div>
+    );
   }
 
+  // Group sessions by project
+  // For now, we'll show all sessions in a "Recent" project
+  // TODO: Add actual project grouping when projects are implemented
+  const projectGroups = [
+    {
+      name: 'Recent Sessions',
+      sessions: sessions.slice(0, 10), // Show last 10 sessions
+    },
+  ];
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-6">
-      {sessions.map((session) => (
-        <SessionCard key={session.id} session={session} />
-      ))}
+    <div className="border-r bg-muted/30">
+      <div className="py-2">
+        {projectGroups.map((project) => (
+          <div key={project.name} className="mb-4">
+            {/* Project Header */}
+            <div className="px-3 py-2 flex items-center gap-2">
+              <FolderOpen className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-medium">{project.name}</span>
+            </div>
+
+            {/* Sessions in this project */}
+            <div className="space-y-1">
+              {project.sessions.map((session) => (
+                <button
+                  key={session.id}
+                  onClick={() => navigate(`/session/${session.id}`)}
+                  className={cn(
+                    'w-full px-3 py-2 flex items-center gap-2 hover:bg-muted/50 transition-colors text-left',
+                    'group',
+                    activeSessionId === session.id && 'bg-muted'
+                  )}
+                >
+                  <Circle
+                    className={cn(
+                      'h-2 w-2 flex-shrink-0',
+                      session.status === 'ready' && 'fill-green-500 text-green-500',
+                      session.status === 'created' && 'fill-yellow-500 text-yellow-500',
+                      session.status === 'cloning' && 'fill-blue-500 text-blue-500',
+                      session.status === 'error' && 'fill-red-500 text-red-500'
+                    )}
+                  />
+                  <span className="text-sm truncate flex-1 group-hover:text-foreground">
+                    {session.name}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

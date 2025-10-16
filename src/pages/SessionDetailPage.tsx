@@ -4,7 +4,7 @@ import { ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
 import { useSession } from '@/hooks/useSession';
-import { LeftNavigationPanel } from '@/components/LeftNavigationPanel';
+import { SessionList } from '@/components/SessionList';
 import { MessagePanel } from '@/components/MessagePanel';
 import { DiffViewer } from '@/components/DiffViewer';
 import { SessionStatusBadge } from '@/components/SessionStatusBadge';
@@ -13,7 +13,7 @@ import { SessionStatusBadge } from '@/components/SessionStatusBadge';
  * SessionDetailPage - Three-column layout for session detail view
  *
  * Layout:
- * - Left: Navigation panel (projects/tasks)
+ * - Left: Session list (same as home page)
  * - Center: Message panel (chat interface)
  * - Right: Diff viewer (file changes)
  *
@@ -103,7 +103,7 @@ export function SessionDetailPage() {
 
       {/* Three-column layout (Design Principle #5: Progressive Disclosure) */}
       <div className="flex-1 grid grid-cols-[minmax(180px,240px)_1fr_minmax(320px,480px)] overflow-hidden">
-        <LeftNavigationPanel sessionId={session.id} />
+        <SessionList onCreateClick={() => navigate('/')} activeSessionId={session.id} />
         <MessagePanel sessionId={session.id} />
         <DiffViewer sessionId={session.id} />
       </div>
