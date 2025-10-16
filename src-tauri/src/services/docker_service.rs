@@ -151,6 +151,22 @@ impl DockerService {
             .start_container(container_id, None::<StartContainerOptions<String>>)
             .await
             .map_err(|e| anyhow!("Failed to start container {container_id}: {e}"))?;
+
+        // Fix ownership of .claude directory so claude user can write to it
+        // The claude user in the container has UID 1001
+        let chown_cmd = vec![
+            "chown".to_string(),
+            "-R".to_string(),
+            "claude:claude".to_string(),
+            "/home/claude/.claude".to_string(),
+        ];
+
+        log::info!("Fixing .claude directory ownership in container {container_id}");
+
+        self.exec_command_blocking(container_id, chown_cmd, None, true)
+            .await
+            .map_err(|e| anyhow!("Failed to fix .claude directory ownership: {e}"))?;
+
         Ok(())
     }
 
@@ -206,6 +222,7 @@ impl DockerService {
     /// * `container_id` - The container ID
     /// * `cmd` - Command to execute as vector of strings (e.g., vec!["claude", "chat", "Hello"])
     /// * `working_dir` - Optional working directory (defaults to container's WORKDIR)
+    /// * `as_root` - Run command as root user (default: false, runs as container's default user)
     ///
     /// # Returns
     /// Returns a stream of output chunks (stdout/stderr combined)
@@ -217,13 +234,14 @@ impl DockerService {
         container_id: &str,
         cmd: Vec<String>,
         working_dir: Option<String>,
+        as_root: bool,
     ) -> Result<impl futures_util::Stream<Item = Result<String>>> {
         // SECURITY: Validate command is in whitelist
         if cmd.is_empty() {
             return Err(anyhow!("Command cannot be empty"));
         }
 
-        let allowed_commands = ["claude", "cat", "sh", "ls", "echo"];
+        let allowed_commands = ["claude", "cat", "sh", "ls", "echo", "chown", "git"];
         let command_name = &cmd[0];
 
         if !allowed_commands.contains(&command_name.as_str()) {
@@ -239,6 +257,11 @@ impl DockerService {
             tty: Some(false), // No TTY for easier parsing
             cmd: Some(cmd.clone()),
             working_dir,
+            user: if as_root {
+                Some("root".to_string())
+            } else {
+                None
+            },
             ..Default::default()
         };
 
@@ -296,10 +319,13 @@ impl DockerService {
         container_id: &str,
         cmd: Vec<String>,
         working_dir: Option<String>,
+        as_root: bool,
     ) -> Result<String> {
         const MAX_OUTPUT_SIZE: usize = 10 * 1024 * 1024; // 10MB limit
 
-        let mut stream = self.exec_command(container_id, cmd, working_dir).await?;
+        let mut stream = self
+            .exec_command(container_id, cmd, working_dir, as_root)
+            .await?;
         let mut output = String::new();
 
         while let Some(chunk_result) = stream.next().await {
@@ -460,7 +486,12 @@ mod tests {
 
         // Execute echo command
         let output = service
-            .exec_command_blocking(&container_id, vec!["echo".into(), "Hello".into()], None)
+            .exec_command_blocking(
+                &container_id,
+                vec!["echo".into(), "Hello".into()],
+                None,
+                false,
+            )
             .await
             .expect("Failed to exec command");
 
@@ -497,6 +528,7 @@ mod tests {
                 &container_id,
                 vec!["sh".into(), "-c".into(), "echo A && echo B".into()],
                 None,
+                false,
             )
             .await
             .expect("Failed to exec command");

@@ -86,27 +86,18 @@ impl ClaudeService {
             .container_id
             .ok_or_else(|| anyhow!("Session has no container ID"))?;
 
-        // Get or initialize Claude session ID
-        let claude_session_id = if let Some(id) = session.claude_session_id {
-            id
-        } else {
-            // First message - generate new Claude session ID
-            let new_id = uuid::Uuid::new_v4().to_string();
-            self.db
-                .update_claude_session_id(session_id, &new_id)
-                .await
-                .map_err(|e| anyhow!("Failed to update Claude session ID: {e}"))?;
-            log::info!("Initialized Claude session ID: {new_id}");
-            new_id
-        };
-
-        // Build Claude command
-        // Format: claude chat --session-id <id> "<message>"
+        // Build Claude command using --continue flag
+        // Claude automatically manages sessions based on current working directory
+        // Sessions are stored in ~/.claude/projects/{sanitized-cwd}/{uuid}.jsonl
+        // The working directory will be /workspace/repo, so Claude will create:
+        // ~/.claude/projects/-workspace-repo/{uuid}.jsonl
         let cmd = vec![
             "claude".to_string(),
-            "chat".to_string(),
-            "--session-id".to_string(),
-            claude_session_id.clone(),
+            "--continue".to_string(),
+            "-p".to_string(),
+            "--dangerously-skip-permissions".to_string(),
+            "--output-format".to_string(),
+            "stream-json".to_string(),
             message.clone(),
         ];
 
@@ -123,7 +114,12 @@ impl ClaudeService {
         // Get output stream from container exec
         let output_stream = self
             .docker
-            .exec_command(&container_id, cmd, Some("/workspace/repo".to_string()))
+            .exec_command(
+                &container_id,
+                cmd,
+                Some("/workspace/repo".to_string()),
+                false,
+            )
             .await
             .map_err(|e| anyhow!("Failed to execute Claude command: {e}"))?;
 
@@ -204,24 +200,37 @@ impl ClaudeService {
             .container_id
             .ok_or_else(|| anyhow!("Session has no container"))?;
 
-        let claude_session_id = session
-            .claude_session_id
-            .ok_or_else(|| anyhow!("No Claude session ID - no messages yet"))?;
+        // Claude stores sessions at: ~/.claude/projects/{sanitized-cwd}/{uuid}.jsonl
+        // Working directory is /workspace/repo, which becomes -workspace-repo
+        // Find the most recent .jsonl file in that directory
+        let projects_dir = "/home/claude/.claude/projects/-workspace-repo";
 
-        // Validate Claude session ID is a valid UUID to prevent command injection
-        uuid::Uuid::parse_str(&claude_session_id)
-            .map_err(|_| anyhow!("Invalid Claude session ID format: not a valid UUID"))?;
+        // List all .jsonl files, sorted by modification time (newest first)
+        let cmd = vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            format!("ls -t {}/*.jsonl 2>/dev/null | head -1", projects_dir),
+        ];
 
-        // Read Claude's session file from container
-        // SECURITY: Path is safe because claude_session_id is validated as UUID above
-        let session_file_path =
-            format!("/home/claude/.claude/sessions/{claude_session_id}/conversation.jsonl");
+        let latest_file = self
+            .docker
+            .exec_command_blocking(&container_id, cmd, None, false)
+            .await
+            .map_err(|e| anyhow!("Failed to find session file in {projects_dir}: {e}"))?;
 
-        let cmd = vec!["cat".to_string(), session_file_path.clone()];
+        let session_file_path = latest_file.trim();
+
+        if session_file_path.is_empty() {
+            // No session file yet - return empty JSONL
+            return Ok(String::new());
+        }
+
+        // Read the session file
+        let cmd = vec!["cat".to_string(), session_file_path.to_string()];
 
         let output = self
             .docker
-            .exec_command_blocking(&container_id, cmd, None)
+            .exec_command_blocking(&container_id, cmd, None, false)
             .await
             .map_err(|e| anyhow!("Failed to read session file {session_file_path}: {e}"))?;
 

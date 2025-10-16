@@ -1,6 +1,5 @@
 use crate::models::{NewSession, Session};
 use crate::state::AppState;
-use std::sync::Arc;
 use tauri::{AppHandle, State};
 
 /// Create a new session with Docker container
@@ -32,19 +31,31 @@ pub async fn create_session(
             message.len()
         );
 
-        // Send message asynchronously (don't wait for response)
-        let session_id = session.id.clone();
-        let claude_service = Arc::clone(&state.claude_service);
-        tokio::spawn(async move {
-            match claude_service.send_message(&session_id, message).await {
-                Ok(_) => {
-                    log::info!("Initial message sent successfully for session {session_id}");
-                }
-                Err(e) => {
-                    log::error!("Failed to send initial message for session {session_id}: {e}");
-                }
-            }
-        });
+        // Send message SYNCHRONOUSLY (wait for completion)
+        // We consume the stream receiver but don't need to process it here
+        // The Claude CLI writes directly to JSONL, which is what we need
+        let mut receiver = state
+            .claude_service
+            .send_message(&session.id, message)
+            .await
+            .map_err(|e| {
+                log::error!(
+                    "Failed to send initial message for session {}: {e}",
+                    session.id
+                );
+                format!("Failed to send initial message: {e}")
+            })?;
+
+        // Drain the receiver to ensure command completes
+        // We don't need to process events here since frontend will load history
+        while receiver.recv().await.is_some() {
+            // Consume events until complete
+        }
+
+        log::info!(
+            "Initial message sent successfully for session {}",
+            session.id
+        );
     }
 
     Ok(session)

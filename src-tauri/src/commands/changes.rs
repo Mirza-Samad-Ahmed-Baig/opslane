@@ -38,6 +38,7 @@ pub async fn get_session_changes(
                 "--porcelain".to_string(),
             ],
             Some("/workspace/repo".to_string()),
+            false,
         )
         .await
         .map_err(|e| format!("Failed to get git status: {e}"))?;
@@ -81,6 +82,7 @@ pub async fn get_session_changes(
                         path.to_string(),
                     ],
                     Some("/workspace/repo".to_string()),
+                    false,
                 )
                 .await
                 .unwrap_or_default()
