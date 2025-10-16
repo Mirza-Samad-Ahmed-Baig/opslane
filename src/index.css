@@ -157,9 +157,9 @@ body {
   --destructive: oklch(0.55 0.18 20);
   --destructive-foreground: oklch(0.985 0 0);
 
-  /* Borders: subtle but visible (improved from 5% to 8%) */
-  --border: oklch(1 0 0 / 8%); /* White 8% opacity - better visibility */
-  --input: oklch(1 0 0 / 12%); /* White 12% opacity - clear input boundaries */
+  /* Borders: extremely subtle (Cursor standard) */
+  --border: oklch(1 0 0 / 5%); /* White 5% opacity - minimal, Cursor-like */
+  --input: oklch(1 0 0 / 8%); /* White 8% opacity - slightly more visible for inputs */
 
   /* Focus ring: medium gray */
   --ring: oklch(0.6 0 0); /* ~#999999 */
@@ -178,7 +178,7 @@ body {
   --sidebar-primary-foreground: oklch(0.985 0 0);
   --sidebar-accent: oklch(0.15 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 8%);
+  --sidebar-border: oklch(1 0 0 / 5%);
   --sidebar-ring: oklch(0.6 0 0);
 
   /* Status Colors - Dark Mode */
