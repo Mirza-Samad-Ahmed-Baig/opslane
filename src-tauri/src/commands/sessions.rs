@@ -21,6 +21,24 @@ pub async fn create_session(
         })
 }
 
+/// Get a single session by ID
+#[tauri::command]
+pub async fn get_session(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<Session, String> {
+    log::debug!("Fetching session: {session_id}");
+
+    state
+        .session_manager
+        .get_session(&session_id)
+        .await
+        .map_err(|e| {
+            log::error!("Failed to get session {session_id}: {e}");
+            format!("Failed to get session: {e}")
+        })
+}
+
 /// List all active sessions
 #[tauri::command]
 pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<Session>, String> {

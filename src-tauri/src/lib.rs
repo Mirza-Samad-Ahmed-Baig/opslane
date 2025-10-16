@@ -53,6 +53,7 @@ pub fn run() {
             check_docker,
             // Session commands
             create_session,
+            get_session,
             list_sessions,
             delete_session,
             get_container_logs,

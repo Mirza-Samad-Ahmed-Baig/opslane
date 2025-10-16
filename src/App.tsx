@@ -9,6 +9,7 @@ import { Alert } from '@/components/ui/alert';
 import { SessionList } from '@/components/SessionList';
 import { NewSessionDialog } from '@/components/NewSessionDialog';
 import { ComponentShowcase } from '@/pages/ComponentShowcase';
+import { SessionDetailPage } from '@/pages/SessionDetailPage';
 import { queryClient } from '@/lib/query-client';
 import { useDockerStatus } from '@/hooks';
 import { logger } from './utils/logger';
@@ -98,6 +99,7 @@ function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<HomePage />} />
+          <Route path="/session/:id" element={<SessionDetailPage />} />
           <Route path="/showcase" element={<ComponentShowcase />} />
         </Routes>
       </BrowserRouter>
