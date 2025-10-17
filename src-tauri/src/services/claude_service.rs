@@ -263,3 +263,145 @@ impl ClaudeService {
         Ok(output)
     }
 }
+
+/// Extract UUID from Claude session file path
+///
+/// # Arguments
+/// * `path` - Full path to .jsonl file (e.g., "/home/claude/.claude/projects/-workspace-repo/abc-123.jsonl")
+///
+/// # Returns
+/// The UUID portion of the filename (e.g., "abc-123")
+///
+/// # Errors
+/// Returns error if path doesn't contain a valid filename or UUID format is invalid
+#[allow(dead_code)]
+fn extract_uuid_from_path(path: &str) -> Result<String> {
+    use std::path::Path;
+
+    let path_obj = Path::new(path);
+    let filename = path_obj
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| anyhow!("Invalid path: no filename found in {path}"))?;
+
+    // Validate UUID format using the uuid crate
+    // Claude uses standard UUIDs in format: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    uuid::Uuid::parse_str(filename)
+        .map_err(|e| anyhow!("Invalid UUID format in filename '{filename}': {e}"))?;
+
+    Ok(filename.to_string())
+}
+
+/// Discover newly created Claude session file by polling the projects directory
+///
+/// Polls the ~/.claude/projects/-workspace-repo directory until a new .jsonl file
+/// appears that wasn't in the original list.
+///
+/// # Arguments
+/// * `container_id` - Container to check
+/// * `docker` - Docker service for executing commands
+/// * `existing_files` - Set of file paths that existed before sending the message
+/// * `timeout_secs` - Maximum seconds to wait for new file (default: 10)
+///
+/// # Returns
+/// Path to the newly created .jsonl file
+///
+/// # Errors
+/// Returns error if no new file appears within timeout period
+#[allow(dead_code)]
+async fn discover_new_session_file(
+    container_id: &str,
+    docker: &DockerService,
+    existing_files: &std::collections::HashSet<String>,
+    timeout_secs: u64,
+) -> Result<String> {
+    use std::time::Duration;
+    use tokio::time::{sleep, Instant};
+
+    let projects_dir = "/home/claude/.claude/projects/-workspace-repo";
+    let start = Instant::now();
+    let timeout = Duration::from_secs(timeout_secs);
+
+    log::debug!("Watching for new session file in {projects_dir}");
+
+    loop {
+        // Check if we've exceeded timeout
+        if start.elapsed() > timeout {
+            return Err(anyhow!(
+                "Timeout waiting for Claude to create session file after {timeout_secs} seconds"
+            ));
+        }
+
+        // List current .jsonl files
+        let cmd = vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            format!("ls {}/*.jsonl 2>/dev/null || true", projects_dir),
+        ];
+
+        let output = docker
+            .exec_command_blocking(container_id, cmd, None, false)
+            .await?;
+
+        // Parse output into set of file paths
+        let current_files: std::collections::HashSet<String> = output
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| line.trim().to_string())
+            .collect();
+
+        // Find new files (files in current but not in existing)
+        let new_files: Vec<String> = current_files.difference(existing_files).cloned().collect();
+
+        if !new_files.is_empty() {
+            // Found new file(s) - return the first one
+            // (should only ever be one new file per message)
+            let new_file = new_files[0].clone();
+            log::info!("Discovered new Claude session file: {new_file}");
+            return Ok(new_file);
+        }
+
+        // Wait 100ms before polling again
+        sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// List all existing .jsonl files in the Claude projects directory
+///
+/// # Arguments
+/// * `container_id` - Container to check
+/// * `docker` - Docker service for executing commands
+///
+/// # Returns
+/// HashSet of full paths to existing .jsonl files
+#[allow(dead_code)]
+async fn list_existing_session_files(
+    container_id: &str,
+    docker: &DockerService,
+) -> Result<std::collections::HashSet<String>> {
+    let projects_dir = "/home/claude/.claude/projects/-workspace-repo";
+
+    let cmd = vec![
+        "sh".to_string(),
+        "-c".to_string(),
+        format!("ls {}/*.jsonl 2>/dev/null || true", projects_dir),
+    ];
+
+    let output = docker
+        .exec_command_blocking(container_id, cmd, None, false)
+        .await?;
+
+    let files: std::collections::HashSet<String> = output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.trim().to_string())
+        .collect();
+
+    log::debug!(
+        "Found {} existing session files in {}",
+        files.len(),
+        projects_dir
+    );
+
+    Ok(files)
+}
