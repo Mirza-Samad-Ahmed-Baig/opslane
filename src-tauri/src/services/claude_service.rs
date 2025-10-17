@@ -86,23 +86,46 @@ impl ClaudeService {
             .container_id
             .ok_or_else(|| anyhow!("Session has no container ID"))?;
 
-        // Build Claude command using --continue flag
-        // Claude automatically manages sessions based on current working directory
-        // Sessions are stored in ~/.claude/projects/{sanitized-cwd}/{uuid}.jsonl
-        // The working directory will be /workspace/repo, so Claude will create:
-        // ~/.claude/projects/-workspace-repo/{uuid}.jsonl
+        // Build Claude command based on session state:
+        // - NEW: Use `claude` to create new session (Phase 3 will capture UUID)
+        // - EXISTING: Use `claude --resume <uuid>` to continue specific session
         //
+        // Claude stores sessions at: ~/.claude/projects/{sanitized-cwd}/{uuid}.jsonl
         // Note: --verbose is required when using -p with --output-format=stream-json
-        let cmd = vec![
-            "claude".to_string(),
-            "--continue".to_string(),
+
+        let mut cmd = vec!["claude".to_string()];
+
+        // Add resume flag if continuing existing session
+        if let Some(claude_session_id) = &session.claude_session_id {
+            log::info!(
+                "Claude command decision for Opslane session {session_id}: RESUME (claude_session_id: {claude_session_id}, container: {container_id})"
+            );
+            cmd.extend_from_slice(&["--resume".to_string(), claude_session_id.clone()]);
+        } else {
+            log::info!(
+                "Claude command decision for Opslane session {session_id}: NEW (container: {container_id})"
+            );
+        }
+
+        // Add common flags (same for both new and existing sessions)
+        cmd.extend_from_slice(&[
             "-p".to_string(),
             "--dangerously-skip-permissions".to_string(),
             "--output-format".to_string(),
             "stream-json".to_string(),
             "--verbose".to_string(),
             message.clone(),
-        ];
+        ]);
+
+        // Track if this is a new session (needs session ID discovery)
+        let is_new_session = session.claude_session_id.is_none();
+        let existing_files = if is_new_session {
+            // List existing files before sending command
+            list_existing_session_files(&container_id, &self.docker).await?
+        } else {
+            // Not needed for existing sessions
+            std::collections::HashSet::new()
+        };
 
         log::info!("Executing Claude command in container {container_id}: {cmd:?}");
 
@@ -131,6 +154,65 @@ impl ClaudeService {
             Self::process_claude_output(output_stream, tx, db, docker, exec_id, session_id_clone)
                 .await;
         });
+
+        // If this is a new session, spawn a task to discover and store Claude's session ID
+        if is_new_session {
+            let db = Arc::clone(&self.db);
+            let docker = Arc::clone(&self.docker);
+            let session_id_clone = session_id.to_string();
+            let container_id_clone = container_id.clone();
+            // Move existing_files directly instead of cloning (more efficient)
+            let existing_files_moved = existing_files;
+
+            tokio::spawn(async move {
+                // Discover the newly created session file
+                match discover_new_session_file(
+                    &container_id_clone,
+                    &docker,
+                    &existing_files_moved,
+                    10, // 10 second timeout
+                )
+                .await
+                {
+                    Ok(session_file_path) => {
+                        log::info!("Found new session file: {session_file_path}");
+
+                        // Extract UUID from filename
+                        match extract_uuid_from_path(&session_file_path) {
+                            Ok(claude_session_id) => {
+                                log::info!(
+                                    "Extracted Claude session ID {claude_session_id} for Opslane session {session_id_clone}"
+                                );
+
+                                // Store in database
+                                if let Err(e) = db
+                                    .update_claude_session_id(&session_id_clone, &claude_session_id)
+                                    .await
+                                {
+                                    log::error!(
+                                        "Failed to store Claude session ID for session {session_id_clone}: {e}"
+                                    );
+                                } else {
+                                    log::info!(
+                                        "Successfully stored Claude session ID {claude_session_id} for Opslane session {session_id_clone}"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                log::error!(
+                                    "Failed to extract UUID from session file {session_file_path}: {e}"
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Failed to discover Claude session file for Opslane session {session_id_clone}: {e}"
+                        );
+                    }
+                }
+            });
+        }
 
         Ok(rx)
     }
@@ -274,7 +356,6 @@ impl ClaudeService {
 ///
 /// # Errors
 /// Returns error if path doesn't contain a valid filename or UUID format is invalid
-#[allow(dead_code)]
 fn extract_uuid_from_path(path: &str) -> Result<String> {
     use std::path::Path;
 
@@ -286,8 +367,11 @@ fn extract_uuid_from_path(path: &str) -> Result<String> {
 
     // Validate UUID format using the uuid crate
     // Claude uses standard UUIDs in format: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-    uuid::Uuid::parse_str(filename)
-        .map_err(|e| anyhow!("Invalid UUID format in filename '{filename}': {e}"))?;
+    uuid::Uuid::parse_str(filename).map_err(|e| {
+        anyhow!(
+            "Invalid UUID format in filename '{filename}'. Expected format: XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX. Error: {e}"
+        )
+    })?;
 
     Ok(filename.to_string())
 }
@@ -308,7 +392,6 @@ fn extract_uuid_from_path(path: &str) -> Result<String> {
 ///
 /// # Errors
 /// Returns error if no new file appears within timeout period
-#[allow(dead_code)]
 async fn discover_new_session_file(
     container_id: &str,
     docker: &DockerService,
@@ -343,6 +426,14 @@ async fn discover_new_session_file(
             .exec_command_blocking(container_id, cmd, None, false)
             .await?;
 
+        // Check timeout again after command execution (defensive check)
+        if start.elapsed() > timeout {
+            return Err(anyhow!(
+                "Timeout exceeded during file listing (took {:?})",
+                start.elapsed()
+            ));
+        }
+
         // Parse output into set of file paths
         let current_files: std::collections::HashSet<String> = output
             .lines()
@@ -374,7 +465,6 @@ async fn discover_new_session_file(
 ///
 /// # Returns
 /// HashSet of full paths to existing .jsonl files
-#[allow(dead_code)]
 async fn list_existing_session_files(
     container_id: &str,
     docker: &DockerService,
