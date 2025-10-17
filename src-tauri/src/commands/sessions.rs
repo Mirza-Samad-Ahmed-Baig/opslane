@@ -47,9 +47,24 @@ pub async fn create_session(
             })?;
 
         // Drain the receiver to ensure command completes
-        // We don't need to process events here since frontend will load history
-        while receiver.recv().await.is_some() {
-            // Consume events until complete
+        // Check for errors in the stream
+        let mut had_error = false;
+        let mut error_message = String::new();
+
+        while let Some(event) = receiver.recv().await {
+            if let crate::services::claude_service::StreamEvent::Error { message } = event {
+                had_error = true;
+                error_message = message;
+                break;
+            }
+        }
+
+        if had_error {
+            log::error!(
+                "Claude command failed for session {}: {error_message}",
+                session.id
+            );
+            return Err(format!("Claude command failed: {error_message}"));
         }
 
         log::info!(

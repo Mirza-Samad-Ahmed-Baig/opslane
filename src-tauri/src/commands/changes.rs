@@ -68,28 +68,9 @@ pub async fn get_session_changes(
             _ => "modified",
         };
 
-        // Get diff for this file (skip untracked files for diff)
-        let diff = if status != "added" {
-            state
-                .docker
-                .exec_command_blocking(
-                    &container_id,
-                    vec![
-                        "git".to_string(),
-                        "diff".to_string(),
-                        "HEAD".to_string(),
-                        "--".to_string(), // Use -- to separate filenames from options
-                        path.to_string(),
-                    ],
-                    Some("/workspace/repo".to_string()),
-                    false,
-                )
-                .await
-                .unwrap_or_default()
-        } else {
-            // For new files, show the content as added
-            format!("+++ {path}\n")
-        };
+        // TODO: Re-enable git diff when we need detailed change information
+        // For now, skip diff to reduce log noise
+        let diff = String::new();
 
         // Count additions/deletions from diff
         let mut additions = 0;

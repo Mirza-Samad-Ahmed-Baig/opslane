@@ -8,6 +8,9 @@ use bollard::models::HostConfig;
 use bollard::Docker;
 use futures_util::stream::StreamExt;
 
+/// Container workspace path where repositories are mounted
+pub const WORKSPACE_PATH: &str = "/workspace/repo";
+
 /// Docker service for managing Claude Code session containers
 #[derive(Debug)]
 pub struct DockerService {
@@ -123,7 +126,7 @@ impl DockerService {
 
         let config = Config {
             image: Some("opslane/claude-session:latest"),
-            working_dir: Some("/workspace/repo"),
+            working_dir: Some(WORKSPACE_PATH),
             host_config: Some(host_config),
             // Keep container running (using literal to prevent command injection)
             cmd: Some(vec!["tail", "-f", "/dev/null"]),
@@ -141,7 +144,12 @@ impl DockerService {
             .await
             .map_err(|e| anyhow!("Failed to create container: {e}"))?;
 
-        Ok(response.id)
+        let container_id = response.id;
+        log::info!(
+            "Created container {container_id} (name: {container_name}, cpu: {cpu_limit}, memory: {memory_limit_mb}MB, image: opslane/claude-session:latest)"
+        );
+
+        Ok(container_id)
     }
 
     /// Start a container
@@ -152,20 +160,20 @@ impl DockerService {
             .await
             .map_err(|e| anyhow!("Failed to start container {container_id}: {e}"))?;
 
-        // Fix ownership of .claude directory so claude user can write to it
-        // The claude user in the container has UID 1001
-        let chown_cmd = vec![
-            "chown".to_string(),
-            "-R".to_string(),
-            "claude:claude".to_string(),
-            "/home/claude/.claude".to_string(),
-        ];
+        log::info!("Container {container_id} started successfully");
 
-        log::info!("Fixing .claude directory ownership in container {container_id}");
-
-        self.exec_command_blocking(container_id, chown_cmd, None, true)
-            .await
-            .map_err(|e| anyhow!("Failed to fix .claude directory ownership: {e}"))?;
+        // Note: We used to run `chown -R claude:claude /home/claude/.claude` here
+        // to fix ownership of the mounted .claude directory. However, this fails on
+        // macOS Docker Desktop because bind-mounted files cannot have their ownership
+        // changed from inside the container.
+        //
+        // This is actually fine - Docker Desktop on macOS automatically handles UID
+        // mapping for bind mounts, so the claude user can read/write the mounted
+        // .claude directory regardless of the displayed ownership.
+        //
+        // The only caveat is that `ls -la` inside the container will show the host
+        // UID (typically 501) instead of the container's claude user UID (1001),
+        // but this is cosmetic and doesn't affect functionality.
 
         Ok(())
     }
@@ -238,20 +246,49 @@ impl DockerService {
         }
     }
 
+    /// Configure git to trust the workspace repository
+    ///
+    /// Fixes "dubious ownership" errors when repo is mounted from host
+    pub async fn configure_git_safe_directory(&self, container_id: &str) -> Result<()> {
+        log::info!("Configuring git safe.directory in container {container_id}");
+
+        let cmd = vec![
+            "git".to_string(),
+            "config".to_string(),
+            "--global".to_string(),
+            "--add".to_string(),
+            "safe.directory".to_string(),
+            WORKSPACE_PATH.to_string(),
+        ];
+
+        self.exec_command_blocking(container_id, cmd, None, false)
+            .await
+            .map_err(|e| anyhow!("Failed to configure git safe.directory: {e}"))?;
+
+        log::info!("Git safe.directory configured successfully");
+        Ok(())
+    }
+
     /// Stop a container (with 30 second timeout)
     #[allow(dead_code)] // Will be used by SessionManager in Phase 3
     pub async fn stop_container(&self, container_id: &str) -> Result<()> {
+        log::info!("Stopping container {container_id} (30s timeout)...");
+
         let options = StopContainerOptions { t: 30 };
         self.client
             .stop_container(container_id, Some(options))
             .await
             .map_err(|e| anyhow!("Failed to stop container {container_id}: {e}"))?;
+
+        log::info!("Container {container_id} stopped successfully");
         Ok(())
     }
 
     /// Remove a container (force remove)
     #[allow(dead_code)] // Will be used by SessionManager in Phase 3
     pub async fn remove_container(&self, container_id: &str) -> Result<()> {
+        log::debug!("Removing container {container_id}...");
+
         let options = RemoveContainerOptions {
             force: true,
             ..Default::default()
@@ -260,11 +297,15 @@ impl DockerService {
             .remove_container(container_id, Some(options))
             .await
             .map_err(|e| anyhow!("Failed to remove container {container_id}: {e}"))?;
+
+        log::info!("Container {container_id} removed successfully");
         Ok(())
     }
 
     /// Get container logs (last 100 lines)
     pub async fn get_logs(&self, container_id: &str) -> Result<String> {
+        log::debug!("Retrieving logs for container {container_id} (last 100 lines)");
+
         let options = LogsOptions::<String> {
             stdout: true,
             stderr: true,
@@ -281,10 +322,14 @@ impl DockerService {
             }
         }
 
+        log::debug!(
+            "Retrieved {} bytes of logs from container {container_id}",
+            logs.len()
+        );
         Ok(logs)
     }
 
-    /// Execute a command in a running container and return streaming output
+    /// Execute a command in a running container and return streaming output with exec ID
     ///
     /// # Arguments
     /// * `container_id` - The container ID
@@ -293,17 +338,17 @@ impl DockerService {
     /// * `as_root` - Run command as root user (default: false, runs as container's default user)
     ///
     /// # Returns
-    /// Returns a stream of output chunks (stdout/stderr combined)
+    /// Returns tuple of (exec_id, output_stream)
     ///
     /// # Security
-    /// Only allows whitelisted commands (claude, cat, sh) to prevent arbitrary command execution
+    /// Only allows whitelisted commands (claude, cat, sh, ls, echo, chown, git) to prevent arbitrary command execution
     pub async fn exec_command(
         &self,
         container_id: &str,
         cmd: Vec<String>,
         working_dir: Option<String>,
         as_root: bool,
-    ) -> Result<impl futures_util::Stream<Item = Result<String>>> {
+    ) -> Result<(String, impl futures_util::Stream<Item = Result<String>>)> {
         // SECURITY: Validate command is in whitelist
         if cmd.is_empty() {
             return Err(anyhow!("Command cannot be empty"));
@@ -339,12 +384,13 @@ impl DockerService {
             .await
             .map_err(|e| anyhow!("Failed to create exec instance: {e}"))?;
 
-        log::info!("Created exec {} for command: {:?}", exec.id, cmd);
+        let exec_id = exec.id.clone();
+        log::debug!("Created exec {exec_id} for command: {cmd:?}");
 
         // Start exec and get output stream
         let stream = self
             .client
-            .start_exec(&exec.id, None)
+            .start_exec(&exec_id, None)
             .await
             .map_err(|e| anyhow!("Failed to start exec: {e}"))?;
 
@@ -374,7 +420,20 @@ impl DockerService {
             }
         };
 
-        Ok(output_stream)
+        Ok((exec_id, output_stream))
+    }
+
+    /// Inspect exec instance to get exit code
+    ///
+    /// Returns None if exec is still running or inspection fails
+    pub async fn inspect_exec(&self, exec_id: &str) -> Result<Option<i64>> {
+        let exec_info = self
+            .client
+            .inspect_exec(exec_id)
+            .await
+            .map_err(|e| anyhow!("Failed to inspect exec {exec_id}: {e}"))?;
+
+        Ok(exec_info.exit_code)
     }
 
     /// Execute a command in a container and wait for completion (non-streaming)
@@ -391,9 +450,10 @@ impl DockerService {
     ) -> Result<String> {
         const MAX_OUTPUT_SIZE: usize = 10 * 1024 * 1024; // 10MB limit
 
-        let mut stream = self
-            .exec_command(container_id, cmd, working_dir, as_root)
+        let (exec_id, mut stream) = self
+            .exec_command(container_id, cmd.clone(), working_dir, as_root)
             .await?;
+
         let mut output = String::new();
 
         while let Some(chunk_result) = stream.next().await {
@@ -409,7 +469,23 @@ impl DockerService {
             output.push_str(&chunk);
         }
 
-        Ok(output)
+        // Inspect exec to get exit code
+        if let Ok(Some(exit_code)) = self.inspect_exec(&exec_id).await {
+            if exit_code == 0 {
+                log::debug!("Exec {exec_id} succeeded (exit code 0)");
+                Ok(output)
+            } else {
+                log::warn!("Exec {exec_id} failed with exit code {exit_code}");
+                Err(anyhow!(
+                    "Command failed with exit code {exit_code}. Output: {output}"
+                ))
+            }
+        } else {
+            log::warn!("Exec {exec_id} completed but exit code unavailable - assuming success");
+            // If we can't get exit code, return output with caution
+            // This maintains backward compatibility for edge cases
+            Ok(output)
+        }
     }
 }
 
@@ -591,7 +667,7 @@ mod tests {
             .expect("Failed to start container");
 
         // Execute command that produces multiple lines
-        let mut stream = service
+        let (_exec_id, mut stream) = service
             .exec_command(
                 &container_id,
                 vec!["sh".into(), "-c".into(), "echo A && echo B".into()],

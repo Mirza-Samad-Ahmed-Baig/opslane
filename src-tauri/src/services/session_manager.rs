@@ -235,6 +235,17 @@ impl SessionManager {
             }
         }
 
+        // Step 3.6: Configure git safe.directory to prevent ownership errors
+        log::info!("Configuring git for session {}", session.id);
+        if let Err(e) = self
+            .docker
+            .configure_git_safe_directory(&container_id)
+            .await
+        {
+            log::warn!("Failed to configure git safe.directory (continuing anyway): {e}");
+            // This is not critical - git commands will just show ownership warnings
+        }
+
         // Step 4: Update database with container info and set status to "ready"
         if let Err(e) = self
             .db

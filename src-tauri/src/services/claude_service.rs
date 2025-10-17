@@ -1,5 +1,5 @@
 use crate::database::Database;
-use crate::services::docker_service::DockerService;
+use crate::services::docker_service::{DockerService, WORKSPACE_PATH};
 use anyhow::{anyhow, Result};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -91,6 +91,8 @@ impl ClaudeService {
         // Sessions are stored in ~/.claude/projects/{sanitized-cwd}/{uuid}.jsonl
         // The working directory will be /workspace/repo, so Claude will create:
         // ~/.claude/projects/-workspace-repo/{uuid}.jsonl
+        //
+        // Note: --verbose is required when using -p with --output-format=stream-json
         let cmd = vec![
             "claude".to_string(),
             "--continue".to_string(),
@@ -98,6 +100,7 @@ impl ClaudeService {
             "--dangerously-skip-permissions".to_string(),
             "--output-format".to_string(),
             "stream-json".to_string(),
+            "--verbose".to_string(),
             message.clone(),
         ];
 
@@ -112,22 +115,21 @@ impl ClaudeService {
         let (tx, rx) = mpsc::channel::<StreamEvent>(100);
 
         // Get output stream from container exec
-        let output_stream = self
+        let (exec_id, output_stream) = self
             .docker
-            .exec_command(
-                &container_id,
-                cmd,
-                Some("/workspace/repo".to_string()),
-                false,
-            )
+            .exec_command(&container_id, cmd, Some(WORKSPACE_PATH.to_string()), false)
             .await
             .map_err(|e| anyhow!("Failed to execute Claude command: {e}"))?;
 
+        log::debug!("Claude exec instance created: {exec_id}");
+
         // Spawn task to process stream and emit events
         let db = Arc::clone(&self.db);
-        let session_id = session_id.to_string();
+        let docker = Arc::clone(&self.docker);
+        let session_id_clone = session_id.to_string();
         tokio::spawn(async move {
-            Self::process_claude_output(output_stream, tx, db, session_id).await;
+            Self::process_claude_output(output_stream, tx, db, docker, exec_id, session_id_clone)
+                .await;
         });
 
         Ok(rx)
@@ -138,27 +140,31 @@ impl ClaudeService {
         mut stream: impl futures_util::Stream<Item = Result<String>> + Unpin,
         tx: mpsc::Sender<StreamEvent>,
         _db: Arc<Database>,
+        docker: Arc<DockerService>,
+        exec_id: String,
         _session_id: String,
     ) {
         let mut accumulated_text = String::new();
+        let mut chunk_count = 0u64;
+        let mut total_bytes = 0u64;
+
+        log::debug!("Starting to process Claude output stream for exec {exec_id}");
 
         while let Some(chunk_result) = stream.next().await {
             match chunk_result {
                 Ok(chunk) => {
-                    // For Phase 2, we'll do simple text streaming
-                    // TODO Phase 3: Parse Claude's structured output (JSON lines)
-                    // TODO Phase 3: Detect tool use events
-
+                    chunk_count += 1;
+                    total_bytes += chunk.len() as u64;
                     accumulated_text.push_str(&chunk);
 
                     // Send text delta event
                     if let Err(e) = tx.send(StreamEvent::TextDelta { content: chunk }).await {
-                        log::error!("Failed to send text delta: {e}");
+                        log::error!("Failed to send text delta for exec {exec_id}: {e}");
                         break;
                     }
                 }
                 Err(e) => {
-                    log::error!("Stream error: {e}");
+                    log::error!("Stream error for exec {exec_id}: {e}");
                     let _ = tx
                         .send(StreamEvent::Error {
                             message: e.to_string(),
@@ -169,15 +175,30 @@ impl ClaudeService {
             }
         }
 
-        // Send completion event
-        let _ = tx.send(StreamEvent::Complete).await;
-
-        // TODO Phase 3: Parse final output and save structured message to JSONL
-        // For now, Claude's CLI will handle persistence in /home/claude/.claude/
+        // Log stream metrics
         log::info!(
-            "Claude response complete ({} bytes)",
-            accumulated_text.len()
+            "Claude response complete for exec {exec_id}: {total_bytes} bytes in {chunk_count} chunks"
         );
+
+        // Inspect exec to get exit code and send appropriate completion event
+        if let Ok(Some(exit_code)) = docker.inspect_exec(&exec_id).await {
+            if exit_code == 0 {
+                log::debug!("Claude exec {exec_id} completed successfully (exit code 0)");
+                let _ = tx.send(StreamEvent::Complete).await;
+            } else {
+                log::warn!("Claude exec {exec_id} failed with exit code {exit_code}");
+                // Send error event with exit code and output
+                let error_msg = format!(
+                    "Claude command failed (exit code {}): {}",
+                    exit_code,
+                    accumulated_text.trim()
+                );
+                let _ = tx.send(StreamEvent::Error { message: error_msg }).await;
+            }
+        } else {
+            // If we can't get exit code, assume success
+            let _ = tx.send(StreamEvent::Complete).await;
+        }
     }
 
     /// Get message history for a session by reading Claude's session files
@@ -233,6 +254,11 @@ impl ClaudeService {
             .exec_command_blocking(&container_id, cmd, None, false)
             .await
             .map_err(|e| anyhow!("Failed to read session file {session_file_path}: {e}"))?;
+
+        log::debug!(
+            "Retrieved {} bytes of message history for session {session_id}",
+            output.len()
+        );
 
         Ok(output)
     }
