@@ -17,7 +17,6 @@ import { SessionDetailPage } from '@/pages/SessionDetailPage';
 import { queryClient } from '@/lib/query-client';
 import { useDockerStatus, useCreateSession } from '@/hooks';
 import type { SessionProgressEvent } from '@/types/session';
-import { READY_STATE_DISPLAY_MS } from '@/types/session';
 import { logger } from './utils/logger';
 import './App.css';
 
@@ -28,41 +27,46 @@ function HomePage() {
   const [repoPath, setRepoPath] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [progressEvent, setProgressEvent] = useState<SessionProgressEvent | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [pendingNavigation, setPendingNavigation] = useState<{
-    sessionId: string;
-    initialMessage: string;
-  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { data: dockerAvailable } = useDockerStatus();
   const createSession = useCreateSession();
 
-  // Quick-start handler
+  // Simplified Quick-start handler
   const handleQuickStart = async () => {
     if (!quickStartMessage.trim() || !repoPath.trim() || isCreating) return;
 
     setIsCreating(true);
     setError(null);
 
+    const tempMessage = quickStartMessage.trim();
+    const tempPath = repoPath.trim();
+
     try {
       const session = await createSession.mutateAsync({
-        name: quickStartMessage.trim().slice(0, 50),
-        local_repo_path: repoPath.trim(),
+        name: tempMessage.slice(0, 50),
+        local_repo_path: tempPath,
         base_branch: 'main',
-        initial_message: quickStartMessage.trim(),
+        initial_message: tempMessage,
       });
 
-      logger.info('Quick-start session created', { sessionId: session.id });
-
-      // Store pending navigation - will navigate after "ready" event
-      setPendingNavigation({
+      logger.info('Quick-start session created, navigating', {
         sessionId: session.id,
-        initialMessage: quickStartMessage.trim(),
+      });
+
+      // Navigate immediately - session exists in DB
+      navigate(`/session/${session.id}`, {
+        state: {
+          initialMessage: tempMessage,
+          isNewSession: true,
+        },
       });
 
       // Clear inputs
       setQuickStartMessage('');
       setRepoPath('');
+
+      // Keep progress visible for UX but don't block
+      // It will clear when ready event arrives
     } catch (error) {
       const err = error as Error;
       logger.error('Failed to create quick-start session', err);
@@ -107,30 +111,24 @@ function HomePage() {
       unlisten = await listen<SessionProgressEvent>('session-progress', (event) => {
         if (!isMounted) return;
 
-        logger.debug('Progress event:', event.payload as unknown as Record<string, unknown>);
+        logger.debug('[App] Progress event details', {
+          status: event.payload.status,
+          session_id: event.payload.session_id,
+          message: event.payload.message,
+          step: event.payload.step,
+          total_steps: event.payload.total_steps,
+        });
         setProgressEvent(event.payload);
 
-        // When session is ready, navigate if pending
+        // When session is ready, just clear progress indicator
         if (event.payload.status === 'ready') {
-          setTimeout(() => {
-            if (!isMounted) return;
+          logger.info('[App] Session ready', {
+            sessionId: event.payload.session_id,
+          });
 
-            // Check if we have a pending navigation for this session
-            setPendingNavigation((pending) => {
-              if (pending && pending.sessionId === event.payload.session_id) {
-                // Navigate to session detail page
-                navigate(`/session/${pending.sessionId}`, {
-                  state: { initialMessage: pending.initialMessage },
-                });
-
-                // Clear states
-                setProgressEvent(null);
-                setIsCreating(false);
-                return null;
-              }
-              return pending;
-            });
-          }, READY_STATE_DISPLAY_MS);
+          // Just clear the progress indicator
+          // Don't clear isCreating - let it stay true until navigation completes
+          setProgressEvent(null);
         }
       });
     };
@@ -216,17 +214,25 @@ function HomePage() {
 
         {/* Center Panel - Quick-start input or progress */}
         <div className="flex-1 flex items-center justify-center bg-background">
-          {isCreating && progressEvent ? (
-            /* Session Creation Progress View */
-            <div className="w-full max-w-xl px-8">
-              <h2 className="text-2xl font-semibold text-center mb-8">Creating Your Session</h2>
-              <SessionCreationProgress
-                currentStatus={progressEvent.status}
-                message={progressEvent.message}
-                currentStep={progressEvent.step}
-                totalSteps={progressEvent.total_steps}
-              />
-            </div>
+          {isCreating ? (
+            progressEvent ? (
+              /* Session Creation Progress View */
+              <div className="w-full max-w-xl px-8">
+                <h2 className="text-2xl font-semibold text-center mb-8">Creating Your Session</h2>
+                <SessionCreationProgress
+                  currentStatus={progressEvent.status}
+                  message={progressEvent.message}
+                  currentStep={progressEvent.step}
+                  totalSteps={progressEvent.total_steps}
+                />
+              </div>
+            ) : (
+              /* Navigating View */
+              <div className="w-full max-w-xl px-8 text-center">
+                <h2 className="text-2xl font-semibold mb-4">Navigating to session...</h2>
+                <p className="text-muted-foreground">Your session is ready. Redirecting now.</p>
+              </div>
+            )
           ) : (
             /* Quick-start Input Form */
             <div className="w-full max-w-2xl px-8">

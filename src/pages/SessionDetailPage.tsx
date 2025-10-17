@@ -1,4 +1,4 @@
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useEffect } from 'react';
 import { ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -25,7 +25,12 @@ import { SessionStatusBadge } from '@/components/SessionStatusBadge';
 export function SessionDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { data: session, isLoading, error } = useSession(id!);
+
+  // Extract initial message from location state
+  const initialMessage = location.state?.initialMessage;
+  const isNewSession = location.state?.isNewSession;
 
   // Keyboard shortcut: Esc to go back (only if no dialog is open)
   useEffect(() => {
@@ -104,7 +109,10 @@ export function SessionDetailPage() {
       {/* Three-column layout (Design Principle #5: Progressive Disclosure) */}
       <div className="flex-1 grid grid-cols-[minmax(180px,240px)_1fr_minmax(320px,480px)] overflow-hidden">
         <SessionList onCreateClick={() => navigate('/')} activeSessionId={session.id} />
-        <MessagePanel sessionId={session.id} />
+        <MessagePanel
+          sessionId={session.id}
+          initialMessage={isNewSession ? initialMessage : undefined}
+        />
         <DiffViewer sessionId={session.id} />
       </div>
     </div>

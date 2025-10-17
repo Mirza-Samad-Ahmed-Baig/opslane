@@ -8,18 +8,20 @@ import { Loader2 } from 'lucide-react';
 
 interface MessagePanelProps {
   sessionId: string;
+  initialMessage?: string;
 }
 
 /**
  * MessagePanel - Center panel for chat messages and input
  * Full implementation with streaming support
  */
-export function MessagePanel({ sessionId }: MessagePanelProps) {
+export function MessagePanel({ sessionId, initialMessage }: MessagePanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const previousMessageCountRef = useRef(0);
 
   const { messages, isLoading, isSending, error, sendMessage, clearError } = useChatMessages({
     sessionId,
+    initialMessage, // Pass to hook
   });
 
   // Auto-scroll to bottom only when new messages are added

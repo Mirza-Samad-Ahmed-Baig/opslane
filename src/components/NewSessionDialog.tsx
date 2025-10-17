@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 import {
@@ -19,7 +19,6 @@ import { validateSessionForm } from '@/lib/validation';
 import { logger } from '@/utils/logger';
 import { SessionCreationProgress } from '@/components/SessionCreationProgress';
 import type { SessionProgressEvent } from '@/types/session';
-import { READY_STATE_DISPLAY_MS } from '@/types/session';
 
 interface NewSessionDialogProps {
   open: boolean;
@@ -45,7 +44,7 @@ const initialFormData: NewSessionFormData = {
  * - Auto-close and form reset on success
  * - Accessible form with proper labels and ARIA attributes
  */
-export function NewSessionDialog({ open, onOpenChange }: NewSessionDialogProps) {
+export function NewSessionDialog({ open, onOpenChange: onOpenChangeProp }: NewSessionDialogProps) {
   const [formData, setFormData] = useState<NewSessionFormData>(initialFormData);
   const [errors, setErrors] = useState<SessionFormErrors>({});
   const [progressEvent, setProgressEvent] = useState<SessionProgressEvent | null>(null);
@@ -54,39 +53,76 @@ export function NewSessionDialog({ open, onOpenChange }: NewSessionDialogProps) 
   const createSession = useCreateSession();
   const { data: dockerAvailable } = useDockerStatus();
 
-  // Listen for progress events
+  // Stabilize onOpenChange callback to prevent effect re-runs that cancel the auto-close timeout
+  const onOpenChange = useCallback(onOpenChangeProp, [onOpenChangeProp]);
+
+  // Listen for progress events - only when dialog is open
   useEffect(() => {
+    // Only set up listener when dialog is open
+    if (!open) {
+      logger.debug('[NewSessionDialog] Dialog not open, skipping listener setup');
+      return;
+    }
+
+    let unlisten: (() => void) | undefined;
+    let isMounted = true;
+
+    logger.debug('[NewSessionDialog] Dialog opened, setting up progress listener');
+
     const setupListener = async () => {
-      const unlisten = await listen<SessionProgressEvent>('session-progress', (event) => {
-        logger.debug('Progress event:', event.payload as unknown as Record<string, unknown>);
+      logger.debug('[NewSessionDialog] setupListener: Starting listener setup');
+      unlisten = await listen<SessionProgressEvent>('session-progress', (event) => {
+        logger.debug('[NewSessionDialog] Event received', {
+          isMounted,
+          status: event.payload.status,
+          message: event.payload.message,
+          step: event.payload.step,
+        });
+
+        if (!isMounted) {
+          logger.debug('[NewSessionDialog] Component unmounted, ignoring event');
+          return;
+        }
+
+        logger.debug('[NewSessionDialog] Processing event, updating state', {
+          status: event.payload.status,
+        });
         setProgressEvent(event.payload);
         setIsCreating(true);
 
-        // Clear progress and close dialog when done
+        // Close dialog immediately when session is ready
+        // Per design principles (Principle 10: Calm Technology):
+        // "No notification when session becomes ready (users can see in UI)"
+        // The session appearing in the list with status="ready" is the feedback
         if (event.payload.status === 'ready') {
-          setTimeout(() => {
-            setProgressEvent(null);
-            setIsCreating(false);
-            onOpenChange(false);
-          }, READY_STATE_DISPLAY_MS);
+          logger.debug('[NewSessionDialog] Ready status detected, closing dialog', {
+            isMounted,
+          });
+          setProgressEvent(null);
+          setIsCreating(false);
+          logger.debug('[NewSessionDialog] Calling onOpenChangeProp(false)');
+          // Call onOpenChangeProp directly to close the dialog
+          // This bypasses handleClose which would block closing while isCreating state updates batch
+          onOpenChangeProp(false);
+          logger.debug('[NewSessionDialog] Dialog close triggered');
         }
       });
-
-      return unlisten;
+      logger.debug('[NewSessionDialog] setupListener: Listener setup complete', {
+        hasUnlisten: !!unlisten,
+      });
     };
 
-    let unlisten: (() => void) | undefined;
-
-    setupListener().then((fn) => {
-      unlisten = fn;
-    });
+    setupListener();
 
     return () => {
+      logger.debug('[NewSessionDialog] Cleanup: Removing event listener');
+      isMounted = false;
       if (unlisten) {
+        logger.debug('[NewSessionDialog] Cleanup: Calling unlisten');
         unlisten();
       }
     };
-  }, [onOpenChange]);
+  }, [open, onOpenChangeProp]);
 
   const handleChange =
     (field: keyof NewSessionFormData) => (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -115,6 +151,7 @@ export function NewSessionDialog({ open, onOpenChange }: NewSessionDialogProps) 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    logger.debug('[NewSessionDialog] handleSubmit called', { formData });
 
     // Validate form
     const validationErrors = validateSessionForm(formData);
@@ -127,15 +164,19 @@ export function NewSessionDialog({ open, onOpenChange }: NewSessionDialogProps) 
     // Check Docker availability
     if (!dockerAvailable) {
       setErrors({ general: 'Docker is not available. Please start Docker and try again.' });
+      logger.debug('[NewSessionDialog] Docker not available');
       return;
     }
 
     // Submit
     try {
+      logger.debug('[NewSessionDialog] Submitting form to createSession');
       await createSession.mutateAsync(formData);
+      logger.debug('[NewSessionDialog] createSession completed');
       // Reset form and close dialog on success
       setFormData(initialFormData);
       setErrors({});
+      logger.debug('[NewSessionDialog] handleSubmit calling onOpenChange(false)');
       onOpenChange(false);
     } catch (error) {
       // Error toast is handled by the hook
@@ -144,11 +185,15 @@ export function NewSessionDialog({ open, onOpenChange }: NewSessionDialogProps) 
   };
 
   const handleClose = () => {
+    logger.debug('[NewSessionDialog] handleClose called', { isCreating });
     if (!isCreating) {
+      logger.debug('[NewSessionDialog] handleClose: Not creating, allowing close');
       setFormData(initialFormData);
       setErrors({});
       setProgressEvent(null);
       onOpenChange(false);
+    } else {
+      logger.debug('[NewSessionDialog] handleClose: Still creating, blocking close');
     }
   };
 

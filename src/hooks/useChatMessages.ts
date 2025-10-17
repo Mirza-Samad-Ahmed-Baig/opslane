@@ -5,6 +5,7 @@ import type { ChatMessage, StreamEvent } from '@/types/messages';
 
 interface UseChatMessagesOptions {
   sessionId: string;
+  initialMessage?: string;
   onStreamStart?: () => void;
   onStreamComplete?: () => void;
   onError?: (error: string) => void;
@@ -26,11 +27,27 @@ function generateMessageId(prefix: string): string {
 
 export function useChatMessages({
   sessionId,
+  initialMessage,
   onStreamStart,
   onStreamComplete,
   onError,
 }: UseChatMessagesOptions): UseChatMessagesReturn {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Initialize with initial message if provided
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    if (initialMessage) {
+      return [
+        {
+          id: `initial-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          role: 'user',
+          type: 'text',
+          content: initialMessage,
+          timestamp: new Date().toISOString(),
+          status: 'sent',
+        },
+      ];
+    }
+    return [];
+  });
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -82,7 +99,12 @@ export function useChatMessages({
           }));
 
         if (!cancelled) {
-          setMessages(transformed);
+          // If we have real messages, replace the optimistic initial message
+          if (transformed.length > 0) {
+            setMessages(transformed);
+          }
+          // Otherwise keep showing the initial message
+
           previousMessageLengthRef.current = transformed.length;
         }
       } catch (err) {
