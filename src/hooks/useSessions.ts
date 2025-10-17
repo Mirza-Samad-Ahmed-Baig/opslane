@@ -38,7 +38,7 @@ export function useSessions() {
       logger.debug('Fetching sessions list');
       try {
         const sessions = await invoke<Session[]>('list_sessions');
-        logger.info('Sessions fetched successfully', { count: sessions.length });
+        // logger.info('Sessions fetched successfully', { count: sessions.length });
         return sessions;
       } catch (error) {
         logger.error('Failed to fetch sessions', error as Error);

@@ -55,13 +55,12 @@ pub async fn send_message(
 /// * `session_id` - The session ID
 ///
 /// # Returns
-/// Returns the raw JSONL content from Claude's session file
-/// TODO Phase 3: Return parsed structured messages
+/// Returns parsed structured messages from Claude's session file
 #[tauri::command]
 pub async fn get_messages(
     session_id: String,
     state: State<'_, AppState>,
-) -> Result<String, String> {
+) -> Result<Vec<crate::services::claude_service::ParsedMessage>, String> {
     log::info!("get_messages command: session={session_id}");
 
     state

@@ -1,11 +1,11 @@
-import type { ChatMessage } from '@/types/messages';
-import { User, Bot, AlertCircle } from 'lucide-react';
+import type { DisplayMessage } from '@/types/messages';
+import { User, Bot, Wrench, CheckCircle, XCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 interface ChatMessageProps {
-  message: ChatMessage;
+  message: DisplayMessage;
 }
 
 export function ChatMessage({ message }: ChatMessageProps) {
@@ -13,71 +13,64 @@ export function ChatMessage({ message }: ChatMessageProps) {
 
   return (
     <div
-      role="article"
-      aria-label={`${message.role} message`}
-      className={cn('flex gap-3 mb-4', isUser ? 'justify-end' : 'justify-start')}
-    >
-      {!isUser && (
-        <div
-          className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-500/10 flex items-center justify-center"
-          aria-hidden="true"
-        >
-          <Bot className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-        </div>
+      className={cn(
+        'flex gap-3 p-4 rounded-lg animate-fadeIn', // Calm animation (200ms fade)
+        isUser ? 'bg-primary/10 ml-12' : 'bg-muted/50 mr-12'
       )}
-
+    >
+      {/* Avatar */}
       <div
         className={cn(
-          'max-w-[75%] rounded-lg px-4 py-2',
-          isUser
-            ? 'bg-primary text-primary-foreground'
-            : message.type === 'error'
-              ? 'bg-status-error-bg text-status-error-fg border border-status-error-border'
-              : 'bg-muted'
+          'flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
+          isUser ? 'bg-primary' : 'bg-muted'
         )}
       >
-        {message.type === 'text' && (
-          <div className="prose prose-sm dark:prose-invert max-w-none">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
-          </div>
+        {isUser ? (
+          <User className="h-4 w-4 text-primary-foreground" />
+        ) : (
+          <Bot className="h-4 w-4 text-muted-foreground" />
         )}
+      </div>
 
-        {message.type === 'tool_use' && (
-          <div className="text-sm">
-            <div className="font-medium mb-1">Tool: {message.toolName}</div>
-            {message.toolResult && (
-              <div
-                className={cn(
-                  'text-xs font-medium',
-                  message.toolResult.success ? 'text-status-success-fg' : 'text-status-error-fg'
-                )}
-              >
-                {message.toolResult.success ? '✓ Success' : '✗ Failed'}
-              </div>
+      {/* Content */}
+      <div className="flex-1 space-y-2">
+        {/* Text content */}
+        {message.text && (
+          <div className="prose prose-sm dark:prose-invert max-w-none">
+            {isUser ? (
+              <p className="text-sm">{message.text}</p>
+            ) : (
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>
             )}
           </div>
         )}
 
-        {message.type === 'error' && (
-          <div className="flex items-start gap-2">
-            <AlertCircle className="h-4 w-4 mt-0.5" />
-            <div className="text-sm">{message.error}</div>
+        {/* Tool badges (basic display, detailed widgets in Phase 3) */}
+        {message.tools && message.tools.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {message.tools.map((tool) => (
+              <div
+                key={tool.id}
+                className="flex items-center gap-1.5 rounded-md border bg-background px-2 py-1 text-xs"
+              >
+                <Wrench className="h-3 w-3" />
+                <span className="font-medium">{tool.name}</span>
+                {tool.result &&
+                  (tool.result.isError ? (
+                    <XCircle className="h-3 w-3 text-destructive" />
+                  ) : (
+                    <CheckCircle className="h-3 w-3 text-green-600" />
+                  ))}
+              </div>
+            ))}
           </div>
         )}
 
-        <div className="text-xs opacity-70 mt-1">
+        {/* Timestamp (subtle, lower contrast per Calm Technology) */}
+        <p className="text-xs text-muted-foreground/60">
           {new Date(message.timestamp).toLocaleTimeString()}
-        </div>
+        </p>
       </div>
-
-      {isUser && (
-        <div
-          className="flex-shrink-0 w-8 h-8 rounded-full bg-purple-500/10 flex items-center justify-center"
-          aria-hidden="true"
-        >
-          <User className="h-4 w-4 text-purple-600 dark:text-purple-400" />
-        </div>
-      )}
     </div>
   );
 }

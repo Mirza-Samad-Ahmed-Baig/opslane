@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import type { ChatMessage, StreamEvent } from '@/types/messages';
+import type { MessageEnvelope, DisplayMessage, StreamEvent, ToolExecution } from '@/types/messages';
 
 interface UseChatMessagesOptions {
   sessionId: string;
@@ -12,7 +12,7 @@ interface UseChatMessagesOptions {
 }
 
 interface UseChatMessagesReturn {
-  messages: ChatMessage[];
+  messages: DisplayMessage[];
   isLoading: boolean;
   isSending: boolean;
   error: string | null;
@@ -33,14 +33,14 @@ export function useChatMessages({
   onError,
 }: UseChatMessagesOptions): UseChatMessagesReturn {
   // Initialize with initial message if provided
-  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+  const [messages, setMessages] = useState<DisplayMessage[]>(() => {
     if (initialMessage) {
       return [
         {
-          id: `initial-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          id: generateMessageId('initial'),
+          uuid: generateMessageId('initial-uuid'),
           role: 'user',
-          type: 'text',
-          content: initialMessage,
+          text: initialMessage,
           timestamp: new Date().toISOString(),
           status: 'sent',
         },
@@ -56,6 +56,66 @@ export function useChatMessages({
   const currentStreamingMessageIdRef = useRef<string | null>(null);
   const previousMessageLengthRef = useRef(0);
 
+  // Transform backend message to display format
+  const transformMessage = useCallback((envelope: MessageEnvelope): DisplayMessage | null => {
+    // Skip non-conversation messages
+    if (!['user', 'assistant'].includes(envelope.messageType)) {
+      return null;
+    }
+
+    // Extract text content
+    const textBlocks = envelope.contentBlocks.filter(
+      (b): b is { type: 'text'; text: string } => b.type === 'text'
+    );
+    const text = textBlocks.map((b) => b.text).join('\n');
+
+    // Extract tool executions
+    const toolUseBlocks = envelope.contentBlocks.filter(
+      (b): b is { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> } =>
+        b.type === 'tool_use'
+    );
+    const toolResultBlocks = envelope.contentBlocks.filter(
+      (b): b is { type: 'tool_result'; toolUseId: string; content: string; isError: boolean } =>
+        b.type === 'tool_result'
+    );
+
+    const tools: ToolExecution[] = toolUseBlocks.map((toolUse) => {
+      const result = toolResultBlocks.find((r) => r.toolUseId === toolUse.id);
+
+      return {
+        id: toolUse.id,
+        name: toolUse.name,
+        input: toolUse.input,
+        result: result
+          ? {
+              content: result.content,
+              isError: result.isError,
+            }
+          : undefined,
+        expanded: false, // Default collapsed (Progressive Disclosure)
+      };
+    });
+
+    // Extract thinking (will be shown as animation in Phase 2)
+    const thinkingBlocks = envelope.contentBlocks.filter(
+      (b): b is { type: 'thinking'; thinking: string; signature?: string } => b.type === 'thinking'
+    );
+    const thinking = thinkingBlocks.length > 0 ? thinkingBlocks[0].thinking : undefined;
+
+    return {
+      id: envelope.id,
+      uuid: envelope.uuid,
+      role: envelope.role || 'assistant',
+      timestamp: envelope.timestamp,
+      status: 'complete',
+      text,
+      tools: tools.length > 0 ? tools : undefined,
+      thinking,
+      usage: envelope.usage,
+      requestId: envelope.requestId,
+    };
+  }, []);
+
   // Load message history on mount
   useEffect(() => {
     let cancelled = false;
@@ -65,47 +125,24 @@ export function useChatMessages({
         setIsLoading(true);
         setError(null);
 
-        // Call get_messages command (returns JSONL string)
-        const historyRaw = await invoke<string>('get_messages', { sessionId });
+        // Call get_messages command (now returns structured data)
+        const envelopes = await invoke<MessageEnvelope[]>('get_messages', { sessionId });
 
         if (cancelled) return;
 
-        // Parse JSONL (each line is a JSON object) with error handling
-        const lines = historyRaw
-          .trim()
-          .split('\n')
-          .filter((line) => line.trim());
-        const parsed = lines
-          .map((line) => {
-            try {
-              return JSON.parse(line);
-            } catch (e) {
-              console.error('Failed to parse message line:', line, e);
-              return null;
-            }
-          })
-          .filter(Boolean);
-
-        // Transform to ChatMessage format (simplified - full logic in actual implementation)
-        const transformed: ChatMessage[] = parsed
-          .filter((item) => item.type === 'user' || item.type === 'assistant')
-          .map((item, index) => ({
-            id: item.message?.id || generateMessageId(`msg-${index}`),
-            role: item.type as 'user' | 'assistant',
-            type: 'text' as const,
-            content: item.message?.content?.[0]?.text || '',
-            timestamp: item.timestamp || new Date().toISOString(),
-            status: 'complete' as const,
-          }));
+        // Transform to DisplayMessage format
+        const displayMessages = envelopes
+          .map(transformMessage)
+          .filter((msg): msg is DisplayMessage => msg !== null);
 
         if (!cancelled) {
           // If we have real messages, replace the optimistic initial message
-          if (transformed.length > 0) {
-            setMessages(transformed);
+          if (displayMessages.length > 0) {
+            setMessages(displayMessages);
           }
           // Otherwise keep showing the initial message
 
-          previousMessageLengthRef.current = transformed.length;
+          previousMessageLengthRef.current = displayMessages.length;
         }
       } catch (err) {
         if (!cancelled) {
@@ -125,7 +162,7 @@ export function useChatMessages({
     return () => {
       cancelled = true;
     };
-  }, [sessionId, onError]);
+  }, [sessionId, transformMessage, onError]);
 
   // Listen for streaming events
   useEffect(() => {
@@ -143,8 +180,8 @@ export function useChatMessages({
               if (currentStreamingMessageIdRef.current) {
                 // Append to existing message
                 return prev.map((msg) =>
-                  msg.id === currentStreamingMessageIdRef.current && msg.type === 'text'
-                    ? { ...msg, content: msg.content + streamEvent.content }
+                  msg.id === currentStreamingMessageIdRef.current
+                    ? { ...msg, text: (msg.text || '') + streamEvent.content }
                     : msg
                 );
               } else {
@@ -155,9 +192,9 @@ export function useChatMessages({
                   ...prev,
                   {
                     id: newId,
+                    uuid: generateMessageId('uuid'),
                     role: 'assistant' as const,
-                    type: 'text' as const,
-                    content: streamEvent.content,
+                    text: streamEvent.content,
                     timestamp: new Date().toISOString(),
                     status: 'streaming' as const,
                   },
@@ -190,9 +227,9 @@ export function useChatMessages({
               ...prev,
               {
                 id: generateMessageId('error'),
+                uuid: generateMessageId('error-uuid'),
                 role: 'assistant' as const,
-                type: 'error' as const,
-                error: streamEvent.message,
+                text: `Error: ${streamEvent.message}`,
                 timestamp: new Date().toISOString(),
                 status: 'error' as const,
               },
@@ -212,7 +249,7 @@ export function useChatMessages({
         unlisten();
       }
     };
-  }, [sessionId, onStreamComplete, onError]); // Fixed: removed currentStreamingMessageId from deps
+  }, [sessionId, onStreamComplete, onError]);
 
   // Send message function
   const sendMessage = useCallback(
@@ -226,11 +263,11 @@ export function useChatMessages({
 
         // Add user message optimistically with collision-resistant ID
         const userMsgId = generateMessageId('user');
-        const userMessage: ChatMessage = {
+        const userMessage: DisplayMessage = {
           id: userMsgId,
+          uuid: generateMessageId('user-uuid'),
           role: 'user',
-          type: 'text',
-          content: content.trim(),
+          text: content.trim(),
           timestamp: new Date().toISOString(),
           status: 'sending',
         };

@@ -207,3 +207,19 @@ body {
     @apply bg-background text-foreground;
   }
 }
+
+/* Calm message entrance animation (200ms fade-in) */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 200ms ease-out;
+}

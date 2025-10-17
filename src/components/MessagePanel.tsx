@@ -1,10 +1,10 @@
 import { useEffect, useRef } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { useChatMessages } from '@/hooks/useChatMessages';
 import { ChatMessage } from '@/components/chat/ChatMessage';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { TypingIndicator } from '@/components/chat/TypingIndicator';
-import { Alert } from '@/components/ui/alert';
-import { Loader2 } from 'lucide-react';
+import { Loader2, X, AlertCircle } from 'lucide-react';
 
 interface MessagePanelProps {
   sessionId: string;
@@ -14,63 +14,116 @@ interface MessagePanelProps {
 
 /**
  * MessagePanel - Center panel for chat messages and input
- * Full implementation with streaming support
+ * Full implementation with streaming support and virtual scrolling for performance
  */
 export function MessagePanel({ sessionId, initialMessage, isSettingUp }: MessagePanelProps) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const previousMessageCountRef = useRef(0);
+  const parentRef = useRef<HTMLDivElement>(null);
+  const isAtBottomRef = useRef(true);
 
   const { messages, isLoading, isSending, error, sendMessage, clearError } = useChatMessages({
     sessionId,
-    initialMessage, // Pass to hook
+    initialMessage,
   });
 
-  // Auto-scroll to bottom only when new messages are added
+  // Virtual scrolling (enabled for >50 messages per Performance Budget)
+  const virtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 100, // Average message height in pixels
+    overscan: 5, // Render 5 extra items above/below viewport
+    enabled: messages.length > 50, // Only virtualize for performance-critical lists
+  });
+
+  // Track if user is at bottom (for Calm Technology: don't interrupt scrolling)
   useEffect(() => {
-    if (messages.length > previousMessageCountRef.current && scrollRef.current) {
-      scrollRef.current.scrollIntoView({ behavior: 'smooth' });
-      previousMessageCountRef.current = messages.length;
+    const parent = parentRef.current;
+    if (!parent) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = parent;
+      const isNearBottom = scrollTop + clientHeight >= scrollHeight - 50;
+      isAtBottomRef.current = isNearBottom;
+    };
+
+    parent.addEventListener('scroll', handleScroll);
+    return () => parent.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // Auto-scroll only if user is at bottom (Calm Technology principle)
+  useEffect(() => {
+    if (isAtBottomRef.current && messages.length > 0) {
+      // Smooth scroll to bottom
+      parentRef.current?.scrollTo({
+        top: parentRef.current.scrollHeight,
+        behavior: 'smooth',
+      });
     }
   }, [messages.length]);
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      {/* Error banner */}
+      {/* Error banner (dismissible) */}
       {error && (
-        <Alert variant="error" className="m-4 mb-0">
-          <div className="flex items-center justify-between">
-            <span>{error}</span>
-            <button
-              onClick={clearError}
-              className="text-xs underline hover:no-underline focus:outline-none focus:ring-2 focus:ring-status-error-fg rounded px-1"
-              aria-label="Dismiss error message"
-            >
-              Dismiss
-            </button>
-          </div>
-        </Alert>
+        <div className="flex items-center gap-2 bg-destructive/10 px-4 py-2 text-sm text-destructive">
+          <AlertCircle className="h-4 w-4" />
+          <span className="flex-1">{error}</span>
+          <button
+            onClick={clearError}
+            className="rounded p-1 hover:bg-destructive/20"
+            aria-label="Dismiss error"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
       )}
 
-      {/* Messages area */}
-      <div className="flex-1 overflow-y-auto p-4">
+      {/* Message list with virtual scrolling */}
+      <div
+        ref={parentRef}
+        className="flex-1 overflow-y-auto"
+        style={{ overscrollBehavior: 'contain' }}
+      >
         {isLoading ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center space-y-2">
-              <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">Loading messages...</p>
-            </div>
+          <div className="flex h-full items-center justify-center text-muted-foreground">
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            Loading messages...
           </div>
         ) : messages.length === 0 && !isSettingUp ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center space-y-2">
-              <p className="text-lg font-medium">No messages yet</p>
-              <p className="text-sm text-muted-foreground">
-                Start a conversation with Claude below
-              </p>
-            </div>
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
+            <p className="text-sm">No messages yet</p>
+            <p className="text-xs">Start a conversation with Claude</p>
+          </div>
+        ) : messages.length > 50 ? (
+          // Virtual scrolling for performance
+          <div
+            style={{
+              height: `${virtualizer.getTotalSize()}px`,
+              width: '100%',
+              position: 'relative',
+            }}
+          >
+            {virtualizer.getVirtualItems().map((virtualRow) => {
+              const message = messages[virtualRow.index];
+              if (!message) return null;
+              return (
+                <div
+                  key={message.id}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                >
+                  <ChatMessage message={message} />
+                </div>
+              );
+            })}
           </div>
         ) : (
-          <>
+          // Regular rendering for <50 messages (simpler, no virtualization overhead)
+          <div className="space-y-4 p-4">
             {messages.map((message) => (
               <ChatMessage key={message.id} message={message} />
             ))}
@@ -78,7 +131,7 @@ export function MessagePanel({ sessionId, initialMessage, isSettingUp }: Message
             {/* Setup indicator */}
             {isSettingUp && (
               <div
-                className="flex items-center gap-2 px-4 py-3 text-muted-foreground"
+                className="flex items-center gap-2 text-muted-foreground"
                 role="status"
                 aria-live="polite"
                 aria-label="Setting up session"
@@ -88,13 +141,13 @@ export function MessagePanel({ sessionId, initialMessage, isSettingUp }: Message
               </div>
             )}
 
+            {/* Typing indicator (shown during streaming) */}
             {isSending && !isSettingUp && <TypingIndicator />}
-            <div ref={scrollRef} />
-          </>
+          </div>
         )}
       </div>
 
-      {/* Input area */}
+      {/* Chat input */}
       <ChatInput
         onSend={sendMessage}
         disabled={isSending || isLoading || isSettingUp}

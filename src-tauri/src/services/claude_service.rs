@@ -3,6 +3,7 @@ use crate::services::docker_service::{DockerService, WORKSPACE_PATH};
 use anyhow::{anyhow, Result};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -29,6 +30,68 @@ pub enum StreamEvent {
     /// Message complete
     #[serde(rename = "complete")]
     Complete,
+}
+
+/// Parsed message from Claude session file
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParsedMessage {
+    pub id: String,
+    pub uuid: String,
+    pub parent_uuid: Option<String>,
+    pub message_type: String,
+    pub role: Option<String>,
+    pub content_blocks: Vec<ContentBlock>,
+    pub timestamp: String,
+    pub usage: Option<UsageInfo>,
+    pub request_id: Option<String>,
+    pub session_id: String,
+    pub git_branch: Option<String>,
+    pub cwd: Option<String>,
+}
+
+/// Content block types found in Claude messages
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ContentBlock {
+    #[serde(rename = "text")]
+    Text { text: String },
+
+    #[serde(rename = "tool_use")]
+    ToolUse {
+        id: String,
+        name: String,
+        input: JsonValue,
+    },
+
+    #[serde(rename = "tool_result")]
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+        is_error: bool,
+    },
+
+    #[serde(rename = "thinking")]
+    Thinking {
+        thinking: String,
+        signature: Option<String>,
+    },
+
+    #[serde(rename = "file_history_snapshot")]
+    FileHistorySnapshot {
+        message_id: String,
+        tracked_files: JsonValue,
+        is_snapshot_update: bool,
+    },
+}
+
+/// Token usage information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageInfo {
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub cache_creation_input_tokens: Option<i64>,
+    pub cache_read_input_tokens: Option<i64>,
 }
 
 /// Service for managing Claude Code interactions within Docker containers
@@ -289,9 +352,10 @@ impl ClaudeService {
     /// * `session_id` - The session ID
     ///
     /// # Returns
-    /// Returns the raw JSONL content from Claude's session file
-    /// TODO Phase 3: Parse JSONL and return structured messages
-    pub async fn get_message_history(&self, session_id: &str) -> Result<String> {
+    /// Returns parsed structured messages from Claude's session file
+    pub async fn get_message_history(&self, session_id: &str) -> Result<Vec<ParsedMessage>> {
+        let start = std::time::Instant::now();
+
         // Get session
         let session = self
             .db
@@ -324,8 +388,8 @@ impl ClaudeService {
         let session_file_path = latest_file.trim();
 
         if session_file_path.is_empty() {
-            // No session file yet - return empty JSONL
-            return Ok(String::new());
+            // No session file yet - return empty vector
+            return Ok(Vec::new());
         }
 
         // Read the session file
@@ -342,7 +406,231 @@ impl ClaudeService {
             output.len()
         );
 
-        Ok(output)
+        // Parse JSONL content
+        let mut messages = Vec::new();
+        for line in output.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+
+            match self.parse_jsonl_line(line) {
+                Ok(Some(msg)) => messages.push(msg),
+                Ok(None) => continue, // Skipped message type
+                Err(e) => {
+                    log::warn!("Failed to parse message line: {e}");
+                }
+            }
+        }
+
+        let duration = start.elapsed();
+        log::info!(
+            "Parsed {} messages in {:?} (<10ms target)",
+            messages.len(),
+            duration
+        );
+
+        // Verify performance budget
+        if duration.as_millis() > 10 {
+            log::warn!(
+                "PERFORMANCE: Message parsing took {}ms, exceeds 10ms budget",
+                duration.as_millis()
+            );
+        }
+
+        Ok(messages)
+    }
+
+    /// Parse a single JSONL line into a ParsedMessage
+    fn parse_jsonl_line(&self, line: &str) -> Result<Option<ParsedMessage>> {
+        let json: JsonValue =
+            serde_json::from_str(line).map_err(|e| anyhow!("JSON parse error: {e}"))?;
+
+        let message_type = json
+            .get("type")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing type field"))?
+            .to_string();
+
+        let uuid = json
+            .get("uuid")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let parent_uuid = json
+            .get("parentUuid")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let timestamp = json
+            .get("timestamp")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // Parse content blocks based on message type
+        let content_blocks = match message_type.as_str() {
+            "user" | "assistant" => self.parse_message_content(&json)?,
+            "file-history-snapshot" => self.parse_file_history(&json)?,
+            _ => Vec::new(),
+        };
+
+        // Extract usage info
+        let usage = self.extract_usage_info(&json);
+
+        Ok(Some(ParsedMessage {
+            id: json
+                .get("message")
+                .and_then(|m| m.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(&uuid)
+                .to_string(),
+            uuid,
+            parent_uuid,
+            message_type,
+            role: json
+                .get("message")
+                .and_then(|m| m.get("role"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            content_blocks,
+            timestamp,
+            usage,
+            request_id: json
+                .get("requestId")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            session_id: json
+                .get("sessionId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            git_branch: json
+                .get("gitBranch")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            cwd: json
+                .get("cwd")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+        }))
+    }
+
+    /// Parse message content blocks (text, tool_use, tool_result, thinking)
+    fn parse_message_content(&self, json: &JsonValue) -> Result<Vec<ContentBlock>> {
+        let mut blocks = Vec::new();
+
+        if let Some(content_array) = json
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_array())
+        {
+            for content in content_array {
+                if let Some(block_type) = content.get("type").and_then(|t| t.as_str()) {
+                    match block_type {
+                        "text" => {
+                            if let Some(text) = content.get("text").and_then(|t| t.as_str()) {
+                                blocks.push(ContentBlock::Text {
+                                    text: text.to_string(),
+                                });
+                            }
+                        }
+                        "tool_use" => {
+                            blocks.push(ContentBlock::ToolUse {
+                                id: content
+                                    .get("id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                name: content
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                input: content.get("input").cloned().unwrap_or(JsonValue::Null),
+                            });
+                        }
+                        "tool_result" => {
+                            blocks.push(ContentBlock::ToolResult {
+                                tool_use_id: content
+                                    .get("tool_use_id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                content: content
+                                    .get("content")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                is_error: content
+                                    .get("is_error")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false),
+                            });
+                        }
+                        "thinking" => {
+                            blocks.push(ContentBlock::Thinking {
+                                thinking: content
+                                    .get("thinking")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                signature: content
+                                    .get("signature")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string()),
+                            });
+                        }
+                        _ => {
+                            log::debug!("Unknown content block type: {block_type}");
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(blocks)
+    }
+
+    /// Parse file history snapshot content
+    fn parse_file_history(&self, json: &JsonValue) -> Result<Vec<ContentBlock>> {
+        if let Some(snapshot) = json.get("snapshot") {
+            Ok(vec![ContentBlock::FileHistorySnapshot {
+                message_id: json
+                    .get("messageId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                tracked_files: snapshot
+                    .get("trackedFileBackups")
+                    .cloned()
+                    .unwrap_or(JsonValue::Object(serde_json::Map::new())),
+                is_snapshot_update: json
+                    .get("isSnapshotUpdate")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+            }])
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    /// Extract usage information from message
+    fn extract_usage_info(&self, json: &JsonValue) -> Option<UsageInfo> {
+        // Check both top-level and nested message.usage
+        let usage = json
+            .get("usage")
+            .or_else(|| json.get("message").and_then(|m| m.get("usage")));
+
+        usage.map(|u| UsageInfo {
+            input_tokens: u.get("input_tokens").and_then(|v| v.as_i64()),
+            output_tokens: u.get("output_tokens").and_then(|v| v.as_i64()),
+            cache_creation_input_tokens: u
+                .get("cache_creation_input_tokens")
+                .and_then(|v| v.as_i64()),
+            cache_read_input_tokens: u.get("cache_read_input_tokens").and_then(|v| v.as_i64()),
+        })
     }
 }
 
