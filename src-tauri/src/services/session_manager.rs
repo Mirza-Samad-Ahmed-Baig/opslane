@@ -6,6 +6,47 @@ use serde_json::json;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
+/// Read Claude credentials from macOS Keychain
+///
+/// Uses `security` command to read credentials stored by Claude CLI
+fn read_claude_credentials_from_keychain() -> Result<String> {
+    use std::process::Command;
+
+    let username = std::env::var("USER").map_err(|_| anyhow!("Could not determine username"))?;
+
+    let output = Command::new("security")
+        .args([
+            "find-generic-password",
+            "-s",
+            "Claude Code-credentials",
+            "-a",
+            &username,
+            "-w",
+        ])
+        .output()
+        .map_err(|e| anyhow!("Failed to execute security command: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("could not be found") {
+            return Err(anyhow!("Claude credentials not found in Keychain"));
+        }
+        return Err(anyhow!("Failed to read credentials: {stderr}"));
+    }
+
+    let credentials_json = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    if credentials_json.is_empty() {
+        return Err(anyhow!("Credentials are empty"));
+    }
+
+    // Validate JSON format
+    serde_json::from_str::<serde_json::Value>(&credentials_json)
+        .map_err(|e| anyhow!("Invalid credentials format: {e}"))?;
+
+    Ok(credentials_json)
+}
+
 /// Session manager orchestrates database and Docker operations
 pub struct SessionManager {
     #[allow(dead_code)] // Used in create_session (Phase 4)
@@ -141,6 +182,58 @@ impl SessionManager {
             container_id,
             session.id
         );
+
+        // Step 3.5: Setup Claude credentials in container
+        // Read credentials from host keychain and write to container
+        log::info!("Setting up Claude credentials for session {}", session.id);
+
+        // Emit progress: Setting up credentials
+        let _ = app_handle.emit(
+            "session-progress",
+            json!({
+                "session_id": &session.id,
+                "status": "configuring",
+                "message": "Setting up Claude credentials..."
+            }),
+        );
+
+        // Try to read and setup credentials - but don't fail session creation if this fails
+        match read_claude_credentials_from_keychain() {
+            Ok(credentials_json) => {
+                // Write credentials to container
+                if let Err(e) = self
+                    .docker
+                    .setup_claude_credentials(&container_id, &credentials_json)
+                    .await
+                {
+                    log::error!("Failed to setup credentials (continuing anyway): {e}");
+                    // Don't fail the whole session creation - just log warning
+                    // Session will work but Claude commands will fail with auth errors
+                    let _ = app_handle.emit(
+                        "session-progress",
+                        json!({
+                            "session_id": &session.id,
+                            "status": "warning",
+                            "message": "Claude credentials not configured. Please log in to Claude CLI."
+                        }),
+                    );
+                } else {
+                    log::info!("Claude credentials configured successfully");
+                }
+            }
+            Err(e) => {
+                log::warn!("Could not read Claude credentials from keychain: {e}");
+                log::warn!("Session will be created but Claude commands may fail");
+                let _ = app_handle.emit(
+                    "session-progress",
+                    json!({
+                        "session_id": &session.id,
+                        "status": "warning",
+                        "message": "Claude credentials not found. Please log in to Claude CLI."
+                    }),
+                );
+            }
+        }
 
         // Step 4: Update database with container info and set status to "ready"
         if let Err(e) = self
