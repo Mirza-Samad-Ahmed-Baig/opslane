@@ -84,6 +84,88 @@ impl SessionManager {
         format!("opslane-session-{short_uuid}")
     }
 
+    /// Calculate directory size in megabytes
+    ///
+    /// Uses `du -sm` command to quickly calculate total directory size.
+    /// Returns 0 if calculation fails (non-fatal).
+    async fn get_dir_size_mb(path: &str) -> f64 {
+        match tokio::process::Command::new("du")
+            .args(["-sm", path]) // Size in MB, summary only
+            .output()
+            .await
+        {
+            Ok(output) if output.status.success() => {
+                let size_str = String::from_utf8_lossy(&output.stdout);
+                size_str
+                    .split_whitespace()
+                    .next()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .map(|s| s as f64)
+                    .unwrap_or(0.0)
+            }
+            _ => {
+                log::warn!("Failed to calculate directory size for {path}");
+                0.0
+            }
+        }
+    }
+
+    /// Copy repository to session-specific location
+    ///
+    /// Creates an isolated copy of the repository for this session in /tmp/opslane-sessions/{session_id}/repo
+    /// Uses cp -a for fast local copying, preserving permissions and symlinks.
+    ///
+    /// Returns the path to the copied repository and the size in MB.
+    async fn copy_repo_for_session(
+        &self,
+        session_id: &str,
+        original_path: &str,
+    ) -> Result<(String, f64)> {
+        // Calculate repo size for logging and progress
+        let repo_size_mb = Self::get_dir_size_mb(original_path).await;
+
+        // Create session-specific directory
+        let session_repo_path = format!("/tmp/opslane-sessions/{session_id}/repo");
+
+        log::info!(
+            "Copying {repo_size_mb:.1} MB repo from {original_path} to {session_repo_path} for session {session_id}"
+        );
+
+        // Create parent directory (but not the final directory - cp will create it)
+        let parent_dir = format!("/tmp/opslane-sessions/{session_id}");
+        tokio::fs::create_dir_all(&parent_dir)
+            .await
+            .map_err(|e| anyhow!("Failed to create session directory: {e}"))?;
+
+        // Copy using cp -a (archive mode: preserves permissions, symlinks, ownership)
+        // This is 2-3x faster than rsync for local-to-local copies
+        let output = tokio::process::Command::new("cp")
+            .args([
+                "-a",               // Archive mode (recursive, preserve all attributes)
+                original_path,      // Source
+                &session_repo_path, // Destination
+            ])
+            .output()
+            .await
+            .map_err(|e| anyhow!("Failed to execute cp: {e}"))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("cp failed: {stderr}"));
+        }
+
+        // Clean up git lock files after copy (they should not be copied)
+        let index_lock = format!("{session_repo_path}/.git/index.lock");
+        let head_lock = format!("{session_repo_path}/.git/HEAD.lock");
+
+        let _ = tokio::fs::remove_file(&index_lock).await; // Ignore errors - file may not exist
+        let _ = tokio::fs::remove_file(&head_lock).await;
+
+        log::info!("Successfully copied {repo_size_mb:.1} MB repo for session {session_id}");
+
+        Ok((session_repo_path, repo_size_mb))
+    }
+
     /// Create a new session with container
     ///
     /// This orchestrates:
@@ -104,6 +186,57 @@ impl SessionManager {
 
         log::info!("Created session {} in database", session.id);
 
+        // Calculate repo size for progress message
+        let repo_size_mb = Self::get_dir_size_mb(&session.local_repo_path).await;
+        let size_display = if repo_size_mb >= 1000.0 {
+            format!("{:.1} GB", repo_size_mb / 1000.0)
+        } else if repo_size_mb > 0.0 {
+            format!("{repo_size_mb:.0} MB")
+        } else {
+            "unknown size".to_string()
+        };
+
+        // Emit progress: Copying repository with size
+        let _ = app_handle.emit(
+            "session-progress",
+            json!({
+                "session_id": &session.id,
+                "status": "copying",
+                "message": format!("Copying {} repository...", size_display)
+            }),
+        );
+
+        // Step 1.5: Copy repository to session-specific location
+        let (session_repo_path, _copied_size_mb) = match self
+            .copy_repo_for_session(&session.id, &session.local_repo_path)
+            .await
+        {
+            Ok((path, size)) => (path, size),
+            Err(e) => {
+                let error_msg = format!("Failed to copy repository: {e}");
+                log::error!("{error_msg}");
+
+                if let Err(db_err) = self.db.update_session_status(&session.id, "error").await {
+                    log::error!("Failed to update session status: {db_err}");
+                }
+
+                return Err(anyhow!(error_msg));
+            }
+        };
+
+        // Update session with the copy path
+        session.session_repo_path = Some(session_repo_path.clone());
+
+        // Store in database
+        if let Err(e) = self
+            .db
+            .update_session_repo_path(&session.id, &session_repo_path)
+            .await
+        {
+            log::error!("Failed to store session_repo_path in database: {e}");
+            // Non-fatal, continue
+        }
+
         // Emit progress: Creating container
         let _ = app_handle.emit(
             "session-progress",
@@ -121,12 +254,12 @@ impl SessionManager {
         let cpu_limit = self.default_cpu_limit; // TODO: Get from session once settings are implemented
         let memory_limit_mb = self.default_memory_limit_mb;
 
-        // Step 2: Create container with host .claude mounted
+        // Step 2: Create container with COPY (not original)
         let container_id = match self
             .docker
             .create_container(
                 &container_name,
-                &session.local_repo_path,
+                &session_repo_path, // CHANGED: Use copy instead of original
                 cpu_limit,
                 memory_limit_mb,
             )
@@ -140,6 +273,11 @@ impl SessionManager {
                 // Update DB with error
                 let error_msg = format!("Failed to create container: {e}");
                 log::error!("{error_msg}");
+
+                // Clean up the copied repo
+                if let Err(cleanup_err) = tokio::fs::remove_dir_all(&session_repo_path).await {
+                    log::error!("Failed to cleanup session repo after container creation failure: {cleanup_err}");
+                }
 
                 if let Err(db_err) = self.db.update_session_status(&session.id, "error").await {
                     log::error!("Failed to update session status: {db_err}");
@@ -336,17 +474,20 @@ impl SessionManager {
     /// 1. Get session details
     /// 2. Stop container (if running)
     /// 3. Remove container
-    /// 4. Soft delete in database (is_deleted=1)
+    /// 4. Clean up copied repository
+    /// 5. Soft delete in database (is_deleted=1)
     ///
     /// Note: Session data in ~/.claude persists on host after deletion
     #[allow(dead_code)] // Will be called from Tauri commands (Phase 4)
     pub async fn delete_session(&self, session_id: &str) -> Result<()> {
-        // Get session to find container ID
+        // Get session to find container ID and repo copy
         let session = self
             .db
             .get_session(session_id)
             .await
             .map_err(|e| anyhow!("Failed to get session: {e}"))?;
+
+        log::info!("Deleting session: {session_id}");
 
         // Step 1: Cleanup container if it exists
         if let Some(container_id) = &session.container_id {
@@ -366,13 +507,23 @@ impl SessionManager {
             }
         }
 
-        // Step 2: Soft delete in database
+        // Step 2: Clean up the copied repository
+        if let Some(session_repo_path) = &session.session_repo_path {
+            log::info!("Removing session repo copy at {session_repo_path}");
+
+            if let Err(e) = tokio::fs::remove_dir_all(session_repo_path).await {
+                log::error!("Failed to remove session repo copy: {e}");
+                // Non-fatal, continue with deletion
+            }
+        }
+
+        // Step 3: Soft delete in database
         self.db
             .delete_session(session_id)
             .await
             .map_err(|e| anyhow!("Failed to delete session in database: {e}"))?;
 
-        log::info!("Session {session_id} deleted (host .claude data persists)");
+        log::info!("Successfully deleted session {session_id}");
         Ok(())
     }
 }

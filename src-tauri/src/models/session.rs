@@ -23,7 +23,8 @@ pub enum ValidationError {
 pub struct Session {
     pub id: String,
     pub name: String,
-    pub local_repo_path: String,
+    pub local_repo_path: String,           // Original repo (user's repo)
+    pub session_repo_path: Option<String>, // Copy location for this session
     pub base_branch: String,
     pub container_id: Option<String>,
     pub container_name: Option<String>,
@@ -92,6 +93,7 @@ mod tests {
             name: "Test Session".to_string(),
             local_repo_path: "/tmp/test".to_string(),
             base_branch: "main".to_string(),
+            initial_message: None,
         };
 
         assert!(new_session.validate().is_ok());
@@ -103,6 +105,7 @@ mod tests {
             name: "".to_string(),
             local_repo_path: "/tmp/test".to_string(),
             base_branch: "main".to_string(),
+            initial_message: None,
         };
 
         assert!(new_session.validate().is_err());
@@ -114,6 +117,7 @@ mod tests {
             name: "a".repeat(101),
             local_repo_path: "/tmp/test".to_string(),
             base_branch: "main".to_string(),
+            initial_message: None,
         };
 
         assert!(new_session.validate().is_err());

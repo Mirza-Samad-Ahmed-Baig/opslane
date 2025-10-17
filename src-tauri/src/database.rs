@@ -99,7 +99,7 @@ impl Database {
                 id, name, local_repo_path, base_branch, status, is_deleted
             ) VALUES (?, ?, ?, ?, 'created', 0)
             RETURNING
-                id, name, local_repo_path, base_branch,
+                id, name, local_repo_path, session_repo_path, base_branch,
                 container_id, container_name, container_branch,
                 status, error_message,
                 volume_name, claude_session_id, last_activity_at,
@@ -122,7 +122,7 @@ impl Database {
         let sessions = sqlx::query_as::<_, crate::models::Session>(
             r#"
             SELECT
-                id, name, local_repo_path, base_branch,
+                id, name, local_repo_path, session_repo_path, base_branch,
                 container_id, container_name, container_branch,
                 status, error_message,
                 volume_name, claude_session_id, last_activity_at,
@@ -144,7 +144,7 @@ impl Database {
         let session = sqlx::query_as::<_, crate::models::Session>(
             r#"
             SELECT
-                id, name, local_repo_path, base_branch,
+                id, name, local_repo_path, session_repo_path, base_branch,
                 container_id, container_name, container_branch,
                 status, error_message,
                 volume_name, claude_session_id, last_activity_at,
@@ -206,6 +206,24 @@ impl Database {
         .bind(container_name)
         .bind(container_branch)
         .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Update session repo path (where we copied the repo for this session)
+    #[allow(dead_code)]
+    pub async fn update_session_repo_path(&self, session_id: &str, repo_path: &str) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE sessions
+            SET session_repo_path = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(repo_path)
+        .bind(session_id)
         .execute(&self.pool)
         .await?;
 
@@ -597,6 +615,7 @@ mod tests {
             "volume_name",
             "claude_session_id",
             "last_activity_at",
+            "session_repo_path",
         ];
 
         assert_eq!(
@@ -617,6 +636,7 @@ mod tests {
             name: "Test Session".to_string(),
             local_repo_path: "/tmp/test-repo".to_string(),
             base_branch: "main".to_string(),
+            initial_message: None,
         };
 
         let session = db.create_session(new_session).await.unwrap();
@@ -647,6 +667,7 @@ mod tests {
                 name: format!("Session {i}"),
                 local_repo_path: format!("/tmp/repo-{i}"),
                 base_branch: "main".to_string(),
+                initial_message: None,
             };
             db.create_session(new_session).await.unwrap();
         }
@@ -667,6 +688,7 @@ mod tests {
             name: "Find Me".to_string(),
             local_repo_path: "/tmp/findme".to_string(),
             base_branch: "main".to_string(),
+            initial_message: None,
         };
 
         let created = db.create_session(new_session).await.unwrap();
@@ -701,6 +723,7 @@ mod tests {
             name: "Status Test".to_string(),
             local_repo_path: "/tmp/status".to_string(),
             base_branch: "main".to_string(),
+            initial_message: None,
         };
 
         let session = db.create_session(new_session).await.unwrap();
@@ -726,6 +749,7 @@ mod tests {
             name: "Container Test".to_string(),
             local_repo_path: "/tmp/container".to_string(),
             base_branch: "main".to_string(),
+            initial_message: None,
         };
 
         let session = db.create_session(new_session).await.unwrap();
@@ -764,6 +788,7 @@ mod tests {
             name: "Delete Me".to_string(),
             local_repo_path: "/tmp/delete".to_string(),
             base_branch: "main".to_string(),
+            initial_message: None,
         };
 
         let session = db.create_session(new_session).await.unwrap();
@@ -798,6 +823,7 @@ mod tests {
                 name: format!("Session {i}"),
                 local_repo_path: format!("/tmp/repo-{i}"),
                 base_branch: "main".to_string(),
+                initial_message: None,
             };
             let session = db.create_session(new_session).await.unwrap();
             session_ids.push(session.id);
@@ -825,6 +851,7 @@ mod tests {
             name: "Volume Test".to_string(),
             local_repo_path: "/tmp/volume-test".to_string(),
             base_branch: "main".to_string(),
+            initial_message: None,
         };
 
         let session = db.create_session(new_session).await.unwrap();
@@ -854,6 +881,7 @@ mod tests {
             name: "Claude ID Test".to_string(),
             local_repo_path: "/tmp/claude-test".to_string(),
             base_branch: "main".to_string(),
+            initial_message: None,
         };
 
         let session = db.create_session(new_session).await.unwrap();
@@ -883,6 +911,7 @@ mod tests {
             name: "Full Persistence Test".to_string(),
             local_repo_path: "/tmp/full-test".to_string(),
             base_branch: "main".to_string(),
+            initial_message: None,
         };
 
         let session = db.create_session(new_session).await.unwrap();
