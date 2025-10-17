@@ -9,13 +9,14 @@ import { Loader2 } from 'lucide-react';
 interface MessagePanelProps {
   sessionId: string;
   initialMessage?: string;
+  isSettingUp?: boolean;
 }
 
 /**
  * MessagePanel - Center panel for chat messages and input
  * Full implementation with streaming support
  */
-export function MessagePanel({ sessionId, initialMessage }: MessagePanelProps) {
+export function MessagePanel({ sessionId, initialMessage, isSettingUp }: MessagePanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const previousMessageCountRef = useRef(0);
 
@@ -59,7 +60,7 @@ export function MessagePanel({ sessionId, initialMessage }: MessagePanelProps) {
               <p className="text-sm text-muted-foreground">Loading messages...</p>
             </div>
           </div>
-        ) : messages.length === 0 ? (
+        ) : messages.length === 0 && !isSettingUp ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center space-y-2">
               <p className="text-lg font-medium">No messages yet</p>
@@ -73,7 +74,21 @@ export function MessagePanel({ sessionId, initialMessage }: MessagePanelProps) {
             {messages.map((message) => (
               <ChatMessage key={message.id} message={message} />
             ))}
-            {isSending && <TypingIndicator />}
+
+            {/* Setup indicator */}
+            {isSettingUp && (
+              <div
+                className="flex items-center gap-2 px-4 py-3 text-muted-foreground"
+                role="status"
+                aria-live="polite"
+                aria-label="Setting up session"
+              >
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                <span className="text-sm">Setting up session...</span>
+              </div>
+            )}
+
+            {isSending && !isSettingUp && <TypingIndicator />}
             <div ref={scrollRef} />
           </>
         )}
@@ -82,8 +97,8 @@ export function MessagePanel({ sessionId, initialMessage }: MessagePanelProps) {
       {/* Input area */}
       <ChatInput
         onSend={sendMessage}
-        disabled={isSending || isLoading}
-        placeholder="Ask Claude to help with your code..."
+        disabled={isSending || isLoading || isSettingUp}
+        placeholder={isSettingUp ? 'Setting up session...' : 'Ask Claude to help with your code...'}
       />
     </div>
   );

@@ -8,6 +8,7 @@ import { SessionList } from '@/components/SessionList';
 import { MessagePanel } from '@/components/MessagePanel';
 import { DiffViewer } from '@/components/DiffViewer';
 import { SessionStatusBadge } from '@/components/SessionStatusBadge';
+import { logger } from '@/utils/logger';
 
 /**
  * SessionDetailPage - Three-column layout for session detail view
@@ -31,6 +32,15 @@ export function SessionDetailPage() {
   // Extract initial message from location state
   const initialMessage = location.state?.initialMessage;
   const isNewSession = location.state?.isNewSession;
+
+  // Determine if session is setting up based on actual status, not navigation state
+  const isSettingUp = session && session.status !== 'ready' && session.status !== 'error';
+
+  logger.debug('[SessionDetail] Session status', {
+    sessionId: id,
+    sessionStatus: session?.status,
+    isSettingUp,
+  });
 
   // Keyboard shortcut: Esc to go back (only if no dialog is open)
   useEffect(() => {
@@ -112,6 +122,7 @@ export function SessionDetailPage() {
         <MessagePanel
           sessionId={session.id}
           initialMessage={isNewSession ? initialMessage : undefined}
+          isSettingUp={isSettingUp}
         />
         <DiffViewer sessionId={session.id} />
       </div>

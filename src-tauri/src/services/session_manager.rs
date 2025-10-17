@@ -277,17 +277,30 @@ impl SessionManager {
     /// On any failure after step 1, updates status="error" and error_message
     #[allow(dead_code)] // Will be called from Tauri commands (Phase 4)
     pub async fn create_session(&self, new: NewSession, app_handle: AppHandle) -> Result<Session> {
+        log::info!("========================================");
+        log::info!("create_session called");
+        log::info!("  name: {}", new.name);
+        log::info!("  path: {}", new.local_repo_path);
+        log::info!("  branch: {}", new.base_branch);
+        log::info!("  has_initial_message: {}", new.initial_message.is_some());
+        log::info!("========================================");
+
         // Define total steps for progress tracking
         const TOTAL_STEPS: u8 = 5;
 
         // Step 1: Create database record
+        log::info!("Step 1: Creating database record...");
         let mut session = self
             .db
             .create_session(new)
             .await
             .map_err(|e| anyhow!("Failed to create session in database: {e}"))?;
 
-        log::info!("Created session {} in database", session.id);
+        log::info!(
+            "Step 1 COMPLETE: Created session {} in database with status={:?}",
+            session.id,
+            session.status
+        );
 
         // Calculate repo size for progress message
         let repo_size_mb = Self::get_dir_size_mb(&session.local_repo_path).await;
@@ -299,7 +312,13 @@ impl SessionManager {
             "unknown size".to_string()
         };
 
+        log::info!("Step 2: Copying repository (size: {size_display})...");
+
         // Emit progress: Copying repository with size
+        log::info!(
+            "EMITTING EVENT: session-progress (copying) for session {}",
+            session.id
+        );
         let _ = app_handle.emit(
             "session-progress",
             json!({
@@ -342,7 +361,14 @@ impl SessionManager {
             // Non-fatal, continue
         }
 
+        log::info!("Step 2 COMPLETE: Repository copied to {session_repo_path}");
+        log::info!("Step 3: Creating container...");
+
         // Emit progress: Creating container
+        log::info!(
+            "EMITTING EVENT: session-progress (creating) for session {}",
+            session.id
+        );
         let _ = app_handle.emit(
             "session-progress",
             json!({
@@ -537,6 +563,13 @@ impl SessionManager {
             container_id
         );
 
+        log::info!("========================================");
+        log::info!("EMITTING FINAL EVENT: session-progress (ready)");
+        log::info!("  session_id: {}", session.id);
+        log::info!("  status: ready");
+        log::info!("  container: {container_id}");
+        log::info!("========================================");
+
         // Emit progress: Container ready
         let _ = app_handle.emit(
             "session-progress",
@@ -548,6 +581,8 @@ impl SessionManager {
                 "total_steps": TOTAL_STEPS,
             }),
         );
+
+        log::info!("Event emitted successfully");
 
         Ok(session)
     }
