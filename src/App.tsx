@@ -4,16 +4,20 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { register, unregisterAll } from '@tauri-apps/plugin-global-shortcut';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { open } from '@tauri-apps/plugin-dialog';
-import { Palette, Send, Loader2, FolderOpen } from 'lucide-react';
+import { listen } from '@tauri-apps/api/event';
+import { Palette, Send, FolderOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
 import { Textarea } from '@/components/ui/textarea';
 import { SessionList } from '@/components/SessionList';
 import { NewSessionDialog } from '@/components/NewSessionDialog';
+import { SessionCreationProgress } from '@/components/SessionCreationProgress';
 import { ComponentShowcase } from '@/pages/ComponentShowcase';
 import { SessionDetailPage } from '@/pages/SessionDetailPage';
 import { queryClient } from '@/lib/query-client';
 import { useDockerStatus, useCreateSession } from '@/hooks';
+import type { SessionProgressEvent } from '@/types/session';
+import { READY_STATE_DISPLAY_MS } from '@/types/session';
 import { logger } from './utils/logger';
 import './App.css';
 
@@ -23,6 +27,12 @@ function HomePage() {
   const [quickStartMessage, setQuickStartMessage] = useState('');
   const [repoPath, setRepoPath] = useState('');
   const [isCreating, setIsCreating] = useState(false);
+  const [progressEvent, setProgressEvent] = useState<SessionProgressEvent | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [pendingNavigation, setPendingNavigation] = useState<{
+    sessionId: string;
+    initialMessage: string;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { data: dockerAvailable } = useDockerStatus();
   const createSession = useCreateSession();
@@ -44,9 +54,10 @@ function HomePage() {
 
       logger.info('Quick-start session created', { sessionId: session.id });
 
-      // Navigate to session detail
-      navigate(`/session/${session.id}`, {
-        state: { initialMessage: quickStartMessage.trim() },
+      // Store pending navigation - will navigate after "ready" event
+      setPendingNavigation({
+        sessionId: session.id,
+        initialMessage: quickStartMessage.trim(),
       });
 
       // Clear inputs
@@ -58,7 +69,7 @@ function HomePage() {
       setError(
         err.message || 'Failed to create session. Please check your repository path and try again.'
       );
-    } finally {
+      setProgressEvent(null);
       setIsCreating(false);
     }
   };
@@ -86,6 +97,53 @@ function HomePage() {
       logger.error('Failed to open directory picker', error as Error);
     }
   };
+
+  // Listen for progress events
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let isMounted = true;
+
+    const setupListener = async () => {
+      unlisten = await listen<SessionProgressEvent>('session-progress', (event) => {
+        if (!isMounted) return;
+
+        logger.debug('Progress event:', event.payload as unknown as Record<string, unknown>);
+        setProgressEvent(event.payload);
+
+        // When session is ready, navigate if pending
+        if (event.payload.status === 'ready') {
+          setTimeout(() => {
+            if (!isMounted) return;
+
+            // Check if we have a pending navigation for this session
+            setPendingNavigation((pending) => {
+              if (pending && pending.sessionId === event.payload.session_id) {
+                // Navigate to session detail page
+                navigate(`/session/${pending.sessionId}`, {
+                  state: { initialMessage: pending.initialMessage },
+                });
+
+                // Clear states
+                setProgressEvent(null);
+                setIsCreating(false);
+                return null;
+              }
+              return pending;
+            });
+          }, READY_STATE_DISPLAY_MS);
+        }
+      });
+    };
+
+    setupListener();
+
+    return () => {
+      isMounted = false;
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, [navigate]);
 
   // Register global shortcuts
   useEffect(() => {
@@ -156,88 +214,96 @@ function HomePage() {
           <SessionList onCreateClick={() => setShowNewDialog(true)} />
         </div>
 
-        {/* Center Panel - Quick-start input only */}
+        {/* Center Panel - Quick-start input or progress */}
         <div className="flex-1 flex items-center justify-center bg-background">
-          <div className="w-full max-w-2xl px-8">
-            <h2 className="text-2xl font-semibold text-center mb-6">
-              What are we working on today?
-            </h2>
+          {isCreating && progressEvent ? (
+            /* Session Creation Progress View */
+            <div className="w-full max-w-xl px-8">
+              <h2 className="text-2xl font-semibold text-center mb-8">Creating Your Session</h2>
+              <SessionCreationProgress
+                currentStatus={progressEvent.status}
+                message={progressEvent.message}
+                currentStep={progressEvent.step}
+                totalSteps={progressEvent.total_steps}
+              />
+            </div>
+          ) : (
+            /* Quick-start Input Form */
+            <div className="w-full max-w-2xl px-8">
+              <h2 className="text-2xl font-semibold text-center mb-6">
+                What are we working on today?
+              </h2>
 
-            {/* Error Alert */}
-            {error && (
-              <Alert variant="error" className="mb-4">
-                <div className="flex items-center justify-between">
-                  <span>{error}</span>
-                  <button
-                    onClick={() => setError(null)}
-                    className="text-xs underline hover:no-underline ml-4"
+              {/* Error Alert */}
+              {error && (
+                <Alert variant="error" className="mb-4">
+                  <div className="flex items-center justify-between">
+                    <span>{error}</span>
+                    <button
+                      onClick={() => setError(null)}
+                      className="text-xs underline hover:no-underline ml-4"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </Alert>
+              )}
+
+              {/* Repository Path Input */}
+              <div className="mb-4">
+                <label className="text-sm font-medium mb-2 block">Project Repository Path</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={repoPath}
+                    onChange={(e) => setRepoPath(e.target.value)}
+                    placeholder="/path/to/your/project"
+                    disabled={!dockerAvailable}
+                    className="flex-1 px-3 py-2 text-sm border border-input bg-background rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+                  />
+                  <Button
+                    onClick={handleBrowseFolder}
+                    disabled={!dockerAvailable}
+                    variant="outline"
+                    size="sm"
+                    className="flex items-center gap-2"
                   >
-                    Dismiss
-                  </button>
+                    <FolderOpen className="h-4 w-4" />
+                    Browse
+                  </Button>
                 </div>
-              </Alert>
-            )}
+                <p className="text-xs text-muted-foreground mt-1">
+                  Click Browse to select your git repository folder
+                </p>
+              </div>
 
-            {/* Repository Path Input */}
-            <div className="mb-4">
-              <label className="text-sm font-medium mb-2 block">Project Repository Path</label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={repoPath}
-                  onChange={(e) => setRepoPath(e.target.value)}
-                  placeholder="/path/to/your/project"
-                  disabled={isCreating || !dockerAvailable}
-                  className="flex-1 px-3 py-2 text-sm border border-input bg-background rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+              {/* Message Input */}
+              <div className="relative">
+                <Textarea
+                  value={quickStartMessage}
+                  onChange={(e) => setQuickStartMessage(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Describe what you want to work on..."
+                  disabled={!dockerAvailable || !repoPath.trim()}
+                  className="min-h-32 pr-12 text-base resize-none"
                 />
                 <Button
-                  onClick={handleBrowseFolder}
-                  disabled={isCreating || !dockerAvailable}
-                  variant="outline"
-                  size="sm"
-                  className="flex items-center gap-2"
+                  onClick={handleQuickStart}
+                  disabled={!quickStartMessage.trim() || !repoPath.trim() || !dockerAvailable}
+                  size="icon"
+                  className="absolute bottom-3 right-3"
+                  title="Start new session"
                 >
-                  <FolderOpen className="h-4 w-4" />
-                  Browse
+                  <Send className="h-4 w-4" />
                 </Button>
               </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Click Browse to select your git repository folder
+              <p className="text-xs text-muted-foreground text-center mt-3">
+                {!repoPath.trim()
+                  ? 'Enter a repository path first'
+                  : 'Press Enter to start a new session'}
               </p>
             </div>
-
-            {/* Message Input */}
-            <div className="relative">
-              <Textarea
-                value={quickStartMessage}
-                onChange={(e) => setQuickStartMessage(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Describe what you want to work on..."
-                disabled={isCreating || !dockerAvailable || !repoPath.trim()}
-                className="min-h-32 pr-12 text-base resize-none"
-              />
-              <Button
-                onClick={handleQuickStart}
-                disabled={
-                  !quickStartMessage.trim() || !repoPath.trim() || isCreating || !dockerAvailable
-                }
-                size="icon"
-                className="absolute bottom-3 right-3"
-                title="Start new session"
-              >
-                {isCreating ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Send className="h-4 w-4" />
-                )}
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground text-center mt-3">
-              {!repoPath.trim()
-                ? 'Enter a repository path first'
-                : 'Press Enter to start a new session'}
-            </p>
-          </div>
+          )}
         </div>
       </div>
 

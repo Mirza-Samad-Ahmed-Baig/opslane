@@ -48,3 +48,70 @@ export interface SessionFormErrors {
   initial_message?: string; // For initial message validation
   general?: string; // For non-field-specific errors (e.g., Docker unavailability)
 }
+
+/**
+ * Session creation progress statuses
+ */
+export type SessionCreationStatus =
+  | 'copying'
+  | 'creating'
+  | 'starting'
+  | 'configuring'
+  | 'ready'
+  | 'error';
+
+/**
+ * Progress step definition
+ */
+export interface SessionProgressStep {
+  id: SessionCreationStatus;
+  label: string;
+  description: string;
+}
+
+/**
+ * Progress event payload from backend
+ */
+export interface SessionProgressEvent {
+  session_id: string;
+  status: SessionCreationStatus;
+  message?: string;
+  step?: number;
+  total_steps?: number;
+}
+
+/**
+ * Predefined session creation steps
+ */
+export const SESSION_CREATION_STEPS: SessionProgressStep[] = [
+  {
+    id: 'copying',
+    label: 'Preparing Repository',
+    description: 'Creating isolated workspace copy',
+  },
+  {
+    id: 'creating',
+    label: 'Building Container',
+    description: 'Setting up Docker environment',
+  },
+  {
+    id: 'starting',
+    label: 'Starting Container',
+    description: 'Launching workspace',
+  },
+  {
+    id: 'configuring',
+    label: 'Configuring Claude',
+    description: 'Setting up credentials',
+  },
+  {
+    id: 'ready',
+    label: 'Ready',
+    description: 'Session is ready!',
+  },
+];
+
+/**
+ * Duration to display "Ready" state before transitioning (milliseconds)
+ */
+export const READY_STATE_DISPLAY_MS = 1500;

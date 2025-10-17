@@ -177,6 +177,9 @@ impl SessionManager {
     /// On any failure after step 1, updates status="error" and error_message
     #[allow(dead_code)] // Will be called from Tauri commands (Phase 4)
     pub async fn create_session(&self, new: NewSession, app_handle: AppHandle) -> Result<Session> {
+        // Define total steps for progress tracking
+        const TOTAL_STEPS: u8 = 5;
+
         // Step 1: Create database record
         let mut session = self
             .db
@@ -202,7 +205,9 @@ impl SessionManager {
             json!({
                 "session_id": &session.id,
                 "status": "copying",
-                "message": format!("Copying {} repository...", size_display)
+                "message": format!("Copying {} repository...", size_display),
+                "step": 1,
+                "total_steps": TOTAL_STEPS,
             }),
         );
 
@@ -243,7 +248,9 @@ impl SessionManager {
             json!({
                 "session_id": &session.id,
                 "status": "creating",
-                "message": "Creating container..."
+                "message": "Creating container...",
+                "step": 2,
+                "total_steps": TOTAL_STEPS,
             }),
         );
 
@@ -293,7 +300,9 @@ impl SessionManager {
             json!({
                 "session_id": &session.id,
                 "status": "starting",
-                "message": "Starting container..."
+                "message": "Starting container...",
+                "step": 3,
+                "total_steps": TOTAL_STEPS,
             }),
         );
 
@@ -331,7 +340,9 @@ impl SessionManager {
             json!({
                 "session_id": &session.id,
                 "status": "configuring",
-                "message": "Setting up Claude credentials..."
+                "message": "Setting up Claude credentials...",
+                "step": 4,
+                "total_steps": TOTAL_STEPS,
             }),
         );
 
@@ -432,7 +443,9 @@ impl SessionManager {
             json!({
                 "session_id": &session.id,
                 "status": "ready",
-                "message": "Container ready"
+                "message": "Session is ready!",
+                "step": 5,
+                "total_steps": TOTAL_STEPS,
             }),
         );
 

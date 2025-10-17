@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
-import { Loader2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -18,6 +17,9 @@ import { useCreateSession, useDockerStatus } from '@/hooks';
 import type { NewSessionFormData, SessionFormErrors } from '@/types';
 import { validateSessionForm } from '@/lib/validation';
 import { logger } from '@/utils/logger';
+import { SessionCreationProgress } from '@/components/SessionCreationProgress';
+import type { SessionProgressEvent } from '@/types/session';
+import { READY_STATE_DISPLAY_MS } from '@/types/session';
 
 interface NewSessionDialogProps {
   open: boolean;
@@ -30,12 +32,6 @@ const initialFormData: NewSessionFormData = {
   base_branch: 'main',
 };
 
-interface ProgressEvent {
-  session_id: string;
-  status: string;
-  message: string;
-}
-
 /**
  * NewSessionDialog - Modal dialog for creating a new development session
  *
@@ -45,14 +41,15 @@ interface ProgressEvent {
  * Features:
  * - Form validation with field-level error display
  * - Docker availability check with warning banner
- * - Loading state during session creation
+ * - Step-by-step progress indicator during session creation
  * - Auto-close and form reset on success
  * - Accessible form with proper labels and ARIA attributes
  */
 export function NewSessionDialog({ open, onOpenChange }: NewSessionDialogProps) {
   const [formData, setFormData] = useState<NewSessionFormData>(initialFormData);
   const [errors, setErrors] = useState<SessionFormErrors>({});
-  const [progressMessage, setProgressMessage] = useState<string | null>(null);
+  const [progressEvent, setProgressEvent] = useState<SessionProgressEvent | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
 
   const createSession = useCreateSession();
   const { data: dockerAvailable } = useDockerStatus();
@@ -60,12 +57,18 @@ export function NewSessionDialog({ open, onOpenChange }: NewSessionDialogProps) 
   // Listen for progress events
   useEffect(() => {
     const setupListener = async () => {
-      const unlisten = await listen<ProgressEvent>('session-progress', (event) => {
-        setProgressMessage(event.payload.message);
+      const unlisten = await listen<SessionProgressEvent>('session-progress', (event) => {
+        logger.debug('Progress event:', event.payload as unknown as Record<string, unknown>);
+        setProgressEvent(event.payload);
+        setIsCreating(true);
 
-        // Clear progress when done
+        // Clear progress and close dialog when done
         if (event.payload.status === 'ready') {
-          setTimeout(() => setProgressMessage(null), 1000);
+          setTimeout(() => {
+            setProgressEvent(null);
+            setIsCreating(false);
+            onOpenChange(false);
+          }, READY_STATE_DISPLAY_MS);
         }
       });
 
@@ -83,7 +86,7 @@ export function NewSessionDialog({ open, onOpenChange }: NewSessionDialogProps) 
         unlisten();
       }
     };
-  }, []);
+  }, [onOpenChange]);
 
   const handleChange =
     (field: keyof NewSessionFormData) => (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -141,9 +144,12 @@ export function NewSessionDialog({ open, onOpenChange }: NewSessionDialogProps) 
   };
 
   const handleClose = () => {
-    setFormData(initialFormData);
-    setErrors({});
-    onOpenChange(false);
+    if (!isCreating) {
+      setFormData(initialFormData);
+      setErrors({});
+      setProgressEvent(null);
+      onOpenChange(false);
+    }
   };
 
   return (
@@ -162,11 +168,14 @@ export function NewSessionDialog({ open, onOpenChange }: NewSessionDialogProps) 
           </Alert>
         )}
 
-        {/* Progress indicator */}
-        {progressMessage && (
-          <Alert variant="info" icon={Loader2} className="[&_svg]:animate-spin">
-            {progressMessage}
-          </Alert>
+        {/* Progress indicator - step-by-step display */}
+        {isCreating && progressEvent && (
+          <SessionCreationProgress
+            currentStatus={progressEvent.status}
+            message={progressEvent.message}
+            currentStep={progressEvent.step}
+            totalSteps={progressEvent.total_steps}
+          />
         )}
 
         <form onSubmit={handleSubmit}>
