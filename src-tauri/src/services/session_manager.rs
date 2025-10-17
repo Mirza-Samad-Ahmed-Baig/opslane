@@ -2,7 +2,9 @@ use crate::database::Database;
 use crate::models::{NewSession, Session};
 use crate::services::DockerService;
 use anyhow::{anyhow, Result};
+use ignore::WalkBuilder;
 use serde_json::json;
+use std::path::Path;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
@@ -110,10 +112,11 @@ impl SessionManager {
         }
     }
 
-    /// Copy repository to session-specific location
+    /// Copy repository to session-specific location (respecting .gitignore)
     ///
     /// Creates an isolated copy of the repository for this session in /tmp/opslane-sessions/{session_id}/repo
-    /// Uses cp -a for fast local copying, preserving permissions and symlinks.
+    /// Uses the `ignore` crate to respect .gitignore patterns, significantly reducing copy size
+    /// and time for repositories with large build artifacts or dependencies.
     ///
     /// Returns the path to the copied repository and the size in MB.
     async fn copy_repo_for_session(
@@ -128,31 +131,102 @@ impl SessionManager {
         let session_repo_path = format!("/tmp/opslane-sessions/{session_id}/repo");
 
         log::info!(
-            "Copying {repo_size_mb:.1} MB repo from {original_path} to {session_repo_path} for session {session_id}"
+            "Copying {repo_size_mb:.1} MB repo from {original_path} to {session_repo_path} (respecting .gitignore)"
         );
 
-        // Create parent directory (but not the final directory - cp will create it)
+        // Create parent directory
         let parent_dir = format!("/tmp/opslane-sessions/{session_id}");
         tokio::fs::create_dir_all(&parent_dir)
             .await
             .map_err(|e| anyhow!("Failed to create session directory: {e}"))?;
 
-        // Copy using cp -a (archive mode: preserves permissions, symlinks, ownership)
-        // This is 2-3x faster than rsync for local-to-local copies
-        let output = tokio::process::Command::new("cp")
-            .args([
-                "-a",               // Archive mode (recursive, preserve all attributes)
-                original_path,      // Source
-                &session_repo_path, // Destination
-            ])
-            .output()
-            .await
-            .map_err(|e| anyhow!("Failed to execute cp: {e}"))?;
+        // Collect files and copy in blocking task (handles read-only git objects)
+        let source = original_path.to_string();
+        let dest = session_repo_path.clone();
+        let file_count = tokio::task::spawn_blocking(move || -> Result<usize> {
+            let mut files = Vec::new();
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow!("cp failed: {stderr}"));
-        }
+            // Build walker with .gitignore support
+            let walker = WalkBuilder::new(&source)
+                .hidden(false) // Include hidden files like .env
+                .git_ignore(true) // Respect .gitignore files
+                .git_global(false) // Don't use global gitignore
+                .git_exclude(true) // Respect .git/info/exclude
+                .require_git(false) // Work even without .git directory
+                .follow_links(false) // Don't follow symlinks (security)
+                .build();
+
+            for result in walker {
+                match result {
+                    Ok(entry) => {
+                        let path = entry.path();
+                        if entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
+                            files.push(path.to_path_buf());
+                        }
+                    }
+                    Err(err) => {
+                        log::warn!("Error walking directory: {err}");
+                    }
+                }
+            }
+
+            // Additionally, collect all files from .git directory explicitly
+            // (since ignore crate skips it by default)
+            let git_dir = Path::new(&source).join(".git");
+            if git_dir.exists() {
+                Self::collect_git_files(&git_dir, &mut files);
+            }
+
+            let file_count = files.len();
+            log::info!("Found {file_count} files to copy (after .gitignore filtering)");
+
+            // Copy files synchronously in blocking task
+            for source_file in files {
+                let relative_path = source_file
+                    .strip_prefix(&source)
+                    .map_err(|e| anyhow!("Failed to get relative path: {e}"))?;
+
+                let dest_file = Path::new(&dest).join(relative_path);
+
+                // Create parent directories
+                if let Some(parent) = dest_file.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        anyhow!("Failed to create directory {}: {e}", parent.display())
+                    })?;
+                }
+
+                // Remove destination if it exists (might be read-only from previous failed attempt)
+                if dest_file.exists() {
+                    if let Err(e) = std::fs::remove_file(&dest_file) {
+                        log::debug!(
+                            "Could not remove existing file {}: {e}",
+                            dest_file.display()
+                        );
+                    }
+                }
+
+                // Copy file
+                std::fs::copy(&source_file, &dest_file)
+                    .map_err(|e| anyhow!("Failed to copy file {}: {e}", source_file.display()))?;
+
+                // Make file writable (git objects are read-only, but we want to be able to delete later)
+                // Note: Only needed on Unix systems - Windows doesn't create read-only files by default
+                // and std::fs::copy preserves Unix permissions, so we need to explicitly add write permission
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(metadata) = std::fs::metadata(&dest_file) {
+                        let mut perms = metadata.permissions();
+                        perms.set_mode(perms.mode() | 0o200); // Add write permission for owner
+                        let _ = std::fs::set_permissions(&dest_file, perms); // Ignore errors
+                    }
+                }
+            }
+
+            Ok(file_count)
+        })
+        .await
+        .map_err(|e| anyhow!("Failed to walk/copy directory: {e}"))??;
 
         // Clean up git lock files after copy (they should not be copied)
         let index_lock = format!("{session_repo_path}/.git/index.lock");
@@ -161,9 +235,35 @@ impl SessionManager {
         let _ = tokio::fs::remove_file(&index_lock).await; // Ignore errors - file may not exist
         let _ = tokio::fs::remove_file(&head_lock).await;
 
-        log::info!("Successfully copied {repo_size_mb:.1} MB repo for session {session_id}");
+        log::info!(
+            "Successfully copied {file_count} files ({repo_size_mb:.1} MB original) for session {session_id}"
+        );
 
         Ok((session_repo_path, repo_size_mb))
+    }
+
+    /// Helper function to recursively collect all files from .git directory
+    ///
+    /// The ignore crate skips .git by default, but we want to preserve git history,
+    /// so we manually walk the .git directory.
+    ///
+    /// Uses iterative approach with a queue to avoid stack overflow on deeply nested repos.
+    fn collect_git_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+        let mut dirs_to_process = vec![dir.to_path_buf()];
+
+        while let Some(current_dir) = dirs_to_process.pop() {
+            if let Ok(entries) = std::fs::read_dir(&current_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+
+                    if path.is_file() {
+                        files.push(path);
+                    } else if path.is_dir() {
+                        dirs_to_process.push(path);
+                    }
+                }
+            }
+        }
     }
 
     /// Create a new session with container
@@ -205,7 +305,7 @@ impl SessionManager {
             json!({
                 "session_id": &session.id,
                 "status": "copying",
-                "message": format!("Copying {} repository...", size_display),
+                "message": format!("Copying {} repository (respecting .gitignore)...", size_display),
                 "step": 1,
                 "total_steps": TOTAL_STEPS,
             }),
@@ -569,5 +669,143 @@ mod tests {
 
         assert_eq!(nano_cpus, 1_500_000_000);
         assert_eq!(memory_bytes, 4294967296i64);
+    }
+
+    #[cfg(feature = "integration-tests")]
+    mod integration_tests {
+        use super::*;
+        use std::fs;
+        use tempfile::TempDir;
+
+        /// Test that copy_repo_for_session respects .gitignore patterns
+        #[tokio::test]
+        async fn test_copy_respects_gitignore() {
+            // Create temporary directory with sample repo structure
+            let temp_dir = TempDir::new().unwrap();
+            let repo_path = temp_dir.path().join("test-repo");
+            fs::create_dir(&repo_path).unwrap();
+
+            // Create .gitignore
+            fs::write(
+                repo_path.join(".gitignore"),
+                "node_modules/\ntarget/\n*.log\n.env\n",
+            )
+            .unwrap();
+
+            // Create files that should be copied
+            fs::write(repo_path.join("README.md"), "# Test").unwrap();
+            fs::create_dir_all(repo_path.join("src")).unwrap();
+            fs::write(repo_path.join("src/main.rs"), "fn main() {}").unwrap();
+
+            // Create files that should be ignored
+            fs::create_dir(repo_path.join("node_modules")).unwrap();
+            fs::write(repo_path.join("node_modules/package.json"), "{}").unwrap();
+            fs::create_dir(repo_path.join("target")).unwrap();
+            fs::write(repo_path.join("target/debug"), "binary").unwrap();
+            fs::write(repo_path.join("error.log"), "error").unwrap();
+            fs::write(repo_path.join(".env"), "SECRET=123").unwrap();
+
+            // Create .git directory (should be preserved)
+            fs::create_dir_all(repo_path.join(".git/refs")).unwrap();
+            fs::write(repo_path.join(".git/HEAD"), "ref: refs/heads/main").unwrap();
+
+            // Create mock session manager (requires Docker, Database - skip for now)
+            // Instead, just test the file walking logic directly
+            let source = repo_path.to_str().unwrap().to_string();
+
+            let files = tokio::task::spawn_blocking(move || {
+                let mut files = Vec::new();
+                let walker = WalkBuilder::new(&source)
+                    .git_ignore(true)
+                    .hidden(false)
+                    .build();
+
+                for result in walker {
+                    if let Ok(entry) = result {
+                        if entry.file_type().unwrap().is_file() {
+                            files.push(entry.path().to_path_buf());
+                        }
+                    }
+                }
+                files
+            })
+            .await
+            .unwrap();
+
+            // Verify ignored files are excluded
+            assert!(
+                !files
+                    .iter()
+                    .any(|p| p.to_str().unwrap().contains("node_modules")),
+                "node_modules should be ignored"
+            );
+            assert!(
+                !files.iter().any(|p| p.to_str().unwrap().contains("target")),
+                "target should be ignored"
+            );
+            assert!(
+                !files.iter().any(|p| p.to_str().unwrap().ends_with(".log")),
+                ".log files should be ignored"
+            );
+            assert!(
+                !files.iter().any(|p| p.to_str().unwrap().ends_with(".env")),
+                ".env should be ignored"
+            );
+
+            // Verify included files are present
+            assert!(
+                files
+                    .iter()
+                    .any(|p| p.to_str().unwrap().ends_with("README.md")),
+                "README.md should be included"
+            );
+            assert!(
+                files
+                    .iter()
+                    .any(|p| p.to_str().unwrap().ends_with("main.rs")),
+                "src/main.rs should be included"
+            );
+        }
+
+        /// Test that repositories without .gitignore copy all files
+        #[tokio::test]
+        async fn test_copy_without_gitignore() {
+            let temp_dir = TempDir::new().unwrap();
+            let repo_path = temp_dir.path().join("no-gitignore-repo");
+            fs::create_dir(&repo_path).unwrap();
+
+            // No .gitignore file
+            fs::write(repo_path.join("file1.txt"), "content").unwrap();
+            fs::write(repo_path.join("file2.log"), "log").unwrap();
+            fs::create_dir(repo_path.join("build")).unwrap();
+            fs::write(repo_path.join("build/output"), "binary").unwrap();
+
+            let source = repo_path.to_str().unwrap().to_string();
+            let files = tokio::task::spawn_blocking(move || {
+                let mut files = Vec::new();
+                let walker = WalkBuilder::new(&source)
+                    .git_ignore(true)
+                    .hidden(false)
+                    .build();
+
+                for result in walker {
+                    if let Ok(entry) = result {
+                        if entry.file_type().unwrap().is_file() {
+                            files.push(entry.path().to_path_buf());
+                        }
+                    }
+                }
+                files
+            })
+            .await
+            .unwrap();
+
+            // Without .gitignore, all files should be included
+            assert_eq!(
+                files.len(),
+                3,
+                "All files should be included without .gitignore"
+            );
+        }
     }
 }
