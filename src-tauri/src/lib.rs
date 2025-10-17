@@ -27,8 +27,9 @@ pub fn run() {
     // Configure logging via Tauri plugin
     use log::LevelFilter;
 
+    #[allow(clippy::if_same_then_else)]
     let log_level = if cfg!(debug_assertions) {
-        LevelFilter::Debug
+        LevelFilter::Info // Changed from Debug to Info
     } else {
         LevelFilter::Info
     };
@@ -37,6 +38,9 @@ pub fn run() {
         .plugin(
             tauri_plugin_log::Builder::default()
                 .level(log_level)
+                // Suppress noisy third-party dependencies
+                .level_for("bollard", LevelFilter::Warn)
+                .level_for("sqlx", LevelFilter::Warn)
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
