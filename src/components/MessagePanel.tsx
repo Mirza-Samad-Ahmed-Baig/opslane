@@ -31,7 +31,7 @@ export function MessagePanel({ sessionId }: MessagePanelProps) {
   }, [messages.length]);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full min-h-0">
       {/* Error banner */}
       {error && (
         <Alert variant="error" className="m-4 mb-0">
