@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import type { MessageEnvelope, DisplayMessage, StreamEvent, ToolExecution } from '@/types/messages';
+import { isTextBlock, isToolUseBlock, isToolResultBlock, isThinkingBlock } from '@/types/messages';
 
 interface UseChatMessagesOptions {
   sessionId: string;
@@ -58,26 +59,22 @@ export function useChatMessages({
 
   // Transform backend message to display format
   const transformMessage = useCallback((envelope: MessageEnvelope): DisplayMessage | null => {
+    // Skip sidechain messages (internal Claude Code messages like "Warmup")
+    if (envelope.isSidechain) {
+      return null;
+    }
+
     // Skip non-conversation messages
     if (!['user', 'assistant'].includes(envelope.messageType)) {
       return null;
     }
 
-    // Extract text content
-    const textBlocks = envelope.contentBlocks.filter(
-      (b): b is { type: 'text'; text: string } => b.type === 'text'
-    );
+    // Use type guards for safer extraction
+    const textBlocks = envelope.contentBlocks.filter(isTextBlock);
     const text = textBlocks.map((b) => b.text).join('\n');
 
-    // Extract tool executions
-    const toolUseBlocks = envelope.contentBlocks.filter(
-      (b): b is { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> } =>
-        b.type === 'tool_use'
-    );
-    const toolResultBlocks = envelope.contentBlocks.filter(
-      (b): b is { type: 'tool_result'; toolUseId: string; content: string; isError: boolean } =>
-        b.type === 'tool_result'
-    );
+    const toolUseBlocks = envelope.contentBlocks.filter(isToolUseBlock);
+    const toolResultBlocks = envelope.contentBlocks.filter(isToolResultBlock);
 
     const tools: ToolExecution[] = toolUseBlocks.map((toolUse) => {
       const result = toolResultBlocks.find((r) => r.toolUseId === toolUse.id);
@@ -96,11 +93,19 @@ export function useChatMessages({
       };
     });
 
-    // Extract thinking (will be shown as animation in Phase 2)
-    const thinkingBlocks = envelope.contentBlocks.filter(
-      (b): b is { type: 'thinking'; thinking: string; signature?: string } => b.type === 'thinking'
-    );
-    const thinking = thinkingBlocks.length > 0 ? thinkingBlocks[0].thinking : undefined;
+    const thinkingBlocks = envelope.contentBlocks.filter(isThinkingBlock);
+    const thinking = thinkingBlocks.length > 0 ? thinkingBlocks[0]?.thinking : undefined;
+
+    // Validate that message has displayable content
+    const hasText = text && text.trim().length > 0;
+    const hasTools = tools.length > 0;
+    const hasThinking = thinking && thinking.length > 0;
+
+    // Skip messages with no displayable content
+    // (This prevents empty user messages from showing)
+    if (!hasText && !hasTools && !hasThinking) {
+      return null;
+    }
 
     return {
       id: envelope.id,
@@ -108,7 +113,7 @@ export function useChatMessages({
       role: envelope.role || 'assistant',
       timestamp: envelope.timestamp,
       status: 'complete',
-      text,
+      text: hasText ? text : undefined, // Only include text if non-empty
       tools: tools.length > 0 ? tools : undefined,
       thinking,
       usage: envelope.usage,

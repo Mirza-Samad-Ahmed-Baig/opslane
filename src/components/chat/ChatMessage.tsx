@@ -14,7 +14,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
   return (
     <div
       className={cn(
-        'flex gap-3 p-4 rounded-lg animate-fadeIn', // Calm animation (200ms fade)
+        'flex gap-3 p-4 rounded-lg animate-fadeIn mb-4', // Calm animation (200ms fade), mb-4 for consistent spacing
         isUser ? 'bg-primary/10 ml-12' : 'bg-muted/50 mr-12'
       )}
     >
@@ -35,7 +35,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
       {/* Content */}
       <div className="flex-1 space-y-2">
         {/* Text content */}
-        {message.text && (
+        {message.text && message.text.trim().length > 0 && (
           <div className="prose prose-sm dark:prose-invert max-w-none">
             {isUser ? (
               <p className="text-sm">{message.text}</p>
@@ -59,12 +59,18 @@ export function ChatMessage({ message }: ChatMessageProps) {
                   (tool.result.isError ? (
                     <XCircle className="h-3 w-3 text-destructive" />
                   ) : (
-                    <CheckCircle className="h-3 w-3 text-green-600" />
+                    <CheckCircle className="h-3 w-3 text-status-success-fg" />
                   ))}
               </div>
             ))}
           </div>
         )}
+
+        {/* Show "No content" only if truly empty */}
+        {(!message.text || message.text.trim().length === 0) &&
+          (!message.tools || message.tools.length === 0) && (
+            <div className="text-sm text-muted-foreground/60 italic">No displayable content</div>
+          )}
 
         {/* Timestamp (subtle, lower contrast per Calm Technology) */}
         <p className="text-xs text-muted-foreground/60">

@@ -29,7 +29,29 @@ export function MessagePanel({ sessionId, initialMessage, isSettingUp }: Message
   const virtualizer = useVirtualizer({
     count: messages.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 100, // Average message height in pixels
+    estimateSize: (index) => {
+      // Dynamic height estimation based on message content
+      const message = messages[index];
+      if (!message) return 100;
+
+      let height = 80; // Base height (avatar + padding + timestamp)
+
+      // Add height for text content (rough estimate: ~20px per 80 chars)
+      if (message.text) {
+        const lines = Math.ceil(message.text.length / 80);
+        height += Math.min(lines * 20, 300); // Cap at 300px for very long messages
+      }
+
+      // Add height for tool badges (~40px per tool)
+      if (message.tools?.length) {
+        height += message.tools.length * 40;
+      }
+
+      // Add margin
+      height += 16; // mb-4 margin
+
+      return height;
+    },
     overscan: 5, // Render 5 extra items above/below viewport
     enabled: messages.length > 50, // Only virtualize for performance-critical lists
   });
@@ -95,31 +117,43 @@ export function MessagePanel({ sessionId, initialMessage, isSettingUp }: Message
           </div>
         ) : messages.length > 50 ? (
           // Virtual scrolling for performance
-          <div
-            style={{
-              height: `${virtualizer.getTotalSize()}px`,
-              width: '100%',
-              position: 'relative',
-            }}
-          >
-            {virtualizer.getVirtualItems().map((virtualRow) => {
-              const message = messages[virtualRow.index];
-              if (!message) return null;
-              return (
-                <div
-                  key={message.id}
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    transform: `translateY(${virtualRow.start}px)`,
-                  }}
-                >
-                  <ChatMessage message={message} />
-                </div>
-              );
-            })}
+          <div className="p-4">
+            <div
+              style={{
+                height: `${virtualizer.getTotalSize()}px`,
+                width: '100%',
+                position: 'relative',
+              }}
+            >
+              {virtualizer.getVirtualItems().map((virtualRow) => {
+                const message = messages[virtualRow.index];
+                if (!message) return null;
+                return (
+                  <div
+                    key={message.id}
+                    data-index={virtualRow.index}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      transform: `translateY(${virtualRow.start}px)`,
+                    }}
+                  >
+                    <ChatMessage message={message} />
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Streaming indicators */}
+            {isSettingUp && (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span className="text-sm">Setting up session...</span>
+              </div>
+            )}
+            {isSending && !isSettingUp && <TypingIndicator />}
           </div>
         ) : (
           // Regular rendering for <50 messages (simpler, no virtualization overhead)

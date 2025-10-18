@@ -48,6 +48,7 @@ pub struct ParsedMessage {
     pub session_id: String,
     pub git_branch: Option<String>,
     pub cwd: Option<String>,
+    pub is_sidechain: Option<bool>,
 }
 
 /// Content block types found in Claude messages
@@ -514,6 +515,7 @@ impl ClaudeService {
                 .get("cwd")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
+            is_sidechain: json.get("isSidechain").and_then(|v| v.as_bool()),
         }))
     }
 
@@ -521,71 +523,104 @@ impl ClaudeService {
     fn parse_message_content(&self, json: &JsonValue) -> Result<Vec<ContentBlock>> {
         let mut blocks = Vec::new();
 
-        if let Some(content_array) = json
-            .get("message")
-            .and_then(|m| m.get("content"))
-            .and_then(|c| c.as_array())
-        {
-            for content in content_array {
-                if let Some(block_type) = content.get("type").and_then(|t| t.as_str()) {
-                    match block_type {
-                        "text" => {
-                            if let Some(text) = content.get("text").and_then(|t| t.as_str()) {
-                                blocks.push(ContentBlock::Text {
-                                    text: text.to_string(),
-                                });
+        if let Some(content_value) = json.get("message").and_then(|m| m.get("content")) {
+            // Handle both string and array content formats
+            match content_value {
+                // Case 1: Simple string content (e.g., user messages)
+                JsonValue::String(text) => {
+                    if !text.is_empty() {
+                        blocks.push(ContentBlock::Text { text: text.clone() });
+                    }
+                }
+                // Case 2: Array of structured content blocks (e.g., assistant messages with tools)
+                JsonValue::Array(content_array) => {
+                    for content in content_array {
+                        if let Some(block_type) = content.get("type").and_then(|t| t.as_str()) {
+                            match block_type {
+                                "text" => {
+                                    if let Some(text) = content.get("text").and_then(|t| t.as_str())
+                                    {
+                                        blocks.push(ContentBlock::Text {
+                                            text: text.to_string(),
+                                        });
+                                    }
+                                }
+                                "tool_use" => {
+                                    blocks.push(ContentBlock::ToolUse {
+                                        id: content
+                                            .get("id")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .to_string(),
+                                        name: content
+                                            .get("name")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .to_string(),
+                                        input: content
+                                            .get("input")
+                                            .cloned()
+                                            .unwrap_or(JsonValue::Null),
+                                    });
+                                }
+                                "tool_result" => {
+                                    blocks.push(ContentBlock::ToolResult {
+                                        tool_use_id: content
+                                            .get("tool_use_id")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .to_string(),
+                                        content: content
+                                            .get("content")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .to_string(),
+                                        is_error: content
+                                            .get("is_error")
+                                            .and_then(|v| v.as_bool())
+                                            .unwrap_or(false),
+                                    });
+                                }
+                                "thinking" => {
+                                    blocks.push(ContentBlock::Thinking {
+                                        thinking: content
+                                            .get("thinking")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .to_string(),
+                                        signature: content
+                                            .get("signature")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string()),
+                                    });
+                                }
+                                _ => {
+                                    log::debug!("Unknown content block type: {block_type}");
+                                }
                             }
                         }
-                        "tool_use" => {
-                            blocks.push(ContentBlock::ToolUse {
-                                id: content
-                                    .get("id")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string(),
-                                name: content
-                                    .get("name")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string(),
-                                input: content.get("input").cloned().unwrap_or(JsonValue::Null),
-                            });
-                        }
-                        "tool_result" => {
-                            blocks.push(ContentBlock::ToolResult {
-                                tool_use_id: content
-                                    .get("tool_use_id")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string(),
-                                content: content
-                                    .get("content")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string(),
-                                is_error: content
-                                    .get("is_error")
-                                    .and_then(|v| v.as_bool())
-                                    .unwrap_or(false),
-                            });
-                        }
-                        "thinking" => {
-                            blocks.push(ContentBlock::Thinking {
-                                thinking: content
-                                    .get("thinking")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string(),
-                                signature: content
-                                    .get("signature")
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string()),
-                            });
-                        }
-                        _ => {
-                            log::debug!("Unknown content block type: {block_type}");
-                        }
                     }
+                }
+                // Case 3: Invalid content format (null, number, object, etc.)
+                _ => {
+                    let uuid = json
+                        .get("uuid")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    log::error!("Invalid content format for message {uuid}: {content_value:?}");
+                    // Create error placeholder so user knows content is malformed
+                    blocks.push(ContentBlock::Text {
+                        text: format!(
+                            "[Error: Invalid message content format. Expected string or array, got: {}]",
+                            match content_value {
+                                JsonValue::Null => "null",
+                                JsonValue::Bool(_) => "boolean",
+                                JsonValue::Number(_) => "number",
+                                JsonValue::Object(_) => "object",
+                                _ => "unknown"
+                            }
+                        ),
+                    });
                 }
             }
         }

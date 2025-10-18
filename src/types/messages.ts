@@ -12,6 +12,7 @@ export interface MessageEnvelope {
   sessionId: string;
   gitBranch?: string;
   cwd?: string;
+  isSidechain?: boolean;
 }
 
 // Content block types
@@ -58,6 +59,23 @@ export interface FileBackup {
   backupFileName: string | null;
   version: number;
   backupTime: string;
+}
+
+// Type guards for content blocks
+export function isTextBlock(block: ContentBlock): block is TextBlock {
+  return block.type === 'text' && 'text' in block;
+}
+
+export function isToolUseBlock(block: ContentBlock): block is ToolUseBlock {
+  return block.type === 'tool_use' && 'id' in block && 'name' in block;
+}
+
+export function isToolResultBlock(block: ContentBlock): block is ToolResultBlock {
+  return block.type === 'tool_result' && 'toolUseId' in block;
+}
+
+export function isThinkingBlock(block: ContentBlock): block is ThinkingBlock {
+  return block.type === 'thinking' && 'thinking' in block;
 }
 
 // Token usage info
