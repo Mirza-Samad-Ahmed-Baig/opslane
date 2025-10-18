@@ -54,18 +54,25 @@ export function useChatMessages({
   const [error, setError] = useState<string | null>(null);
 
   // Use ref to avoid race condition with effect dependencies
-  const currentStreamingMessageIdRef = useRef<string | null>(null);
   const previousMessageLengthRef = useRef(0);
 
   // Transform backend message to display format
   const transformMessage = useCallback((envelope: MessageEnvelope): DisplayMessage | null => {
-    // Skip sidechain messages (internal Claude Code messages like "Warmup")
-    if (envelope.isSidechain) {
+    // WHITELIST: Only display conversation and file history messages
+    const DISPLAYABLE_TYPES = ['user', 'assistant', 'file-history-snapshot'];
+
+    if (!DISPLAYABLE_TYPES.includes(envelope.messageType)) {
+      // Filter out internal messages: system, warmup, heartbeat, connected, complete
+      console.debug(
+        `[useChatMessages] Filtered non-displayable message type: ${envelope.messageType}`
+      );
       return null;
     }
 
-    // Skip non-conversation messages
-    if (!['user', 'assistant'].includes(envelope.messageType)) {
+    // Additional safety check for system messages
+    // (Claude Code may send system messages with various subtypes)
+    if (envelope.messageType === 'system') {
+      console.debug('[useChatMessages] Filtered system message');
       return null;
     }
 
@@ -181,47 +188,60 @@ export function useChatMessages({
 
         switch (streamEvent.type) {
           case 'text_delta': {
+            // Parse JSONL content from streaming event
+            // Backend sends complete JSONL lines (e.g., '{"type":"user","uuid":"..."}\n')
+            const lines = streamEvent.content.split('\n').filter((line) => line.trim());
+
             setMessages((prev) => {
-              if (currentStreamingMessageIdRef.current) {
-                // Append to existing message
-                return prev.map((msg) =>
-                  msg.id === currentStreamingMessageIdRef.current
-                    ? { ...msg, text: (msg.text || '') + streamEvent.content }
-                    : msg
-                );
-              } else {
-                // Create new assistant message
-                const newId = generateMessageId('msg');
-                currentStreamingMessageIdRef.current = newId;
-                return [
-                  ...prev,
-                  {
-                    id: newId,
-                    uuid: generateMessageId('uuid'),
-                    role: 'assistant' as const,
-                    text: streamEvent.content,
-                    timestamp: new Date().toISOString(),
-                    status: 'streaming' as const,
-                  },
-                ];
+              const updatedMessages = [...prev];
+
+              for (const line of lines) {
+                try {
+                  // Parse JSONL line as MessageEnvelope
+                  const envelope = JSON.parse(line) as MessageEnvelope;
+
+                  // Transform to DisplayMessage (with filtering)
+                  const displayMessage = transformMessage(envelope);
+
+                  if (displayMessage) {
+                    // Check if message already exists (by uuid)
+                    const existingIndex = updatedMessages.findIndex(
+                      (m) => m.uuid === displayMessage.uuid
+                    );
+
+                    if (existingIndex >= 0) {
+                      // Update existing message (streaming content updates)
+                      updatedMessages[existingIndex] = {
+                        ...updatedMessages[existingIndex],
+                        ...displayMessage,
+                        status: 'streaming' as const,
+                      };
+                    } else {
+                      // Add new message
+                      updatedMessages.push({
+                        ...displayMessage,
+                        status: 'streaming' as const,
+                      });
+                    }
+                  }
+                } catch (e) {
+                  // Not valid JSONL - might be error message or non-JSON output
+                  console.warn('[useChatMessages] Failed to parse streaming JSONL:', e, line);
+                }
               }
+
+              return updatedMessages;
             });
             break;
           }
 
           case 'complete': {
-            if (currentStreamingMessageIdRef.current) {
-              setMessages((prev) => {
-                const updated = prev.map((msg) =>
-                  msg.id === currentStreamingMessageIdRef.current
-                    ? { ...msg, status: 'complete' as const }
-                    : msg
-                );
-                previousMessageLengthRef.current = updated.length;
-                return updated;
-              });
-            }
-            currentStreamingMessageIdRef.current = null;
+            // Mark all streaming messages as complete
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.status === 'streaming' ? { ...msg, status: 'complete' as const } : msg
+              )
+            );
             setIsSending(false);
             onStreamComplete?.();
             break;
