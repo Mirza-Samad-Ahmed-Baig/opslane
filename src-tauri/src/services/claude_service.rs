@@ -506,9 +506,16 @@ impl ClaudeService {
             .await
             .map_err(|e| anyhow!("Failed to get session: {e}"))?;
 
-        let container_id = session
-            .container_id
-            .ok_or_else(|| anyhow!("Session has no container"))?;
+        // Phase 1: If container isn't ready yet (background setup still running),
+        // return empty array instead of error. The optimistic message will be shown
+        // from the DB (session.initial_message) until the container is ready.
+        let container_id = match session.container_id {
+            Some(id) => id,
+            None => {
+                log::debug!("Session {session_id} has no container yet (setup in progress), returning empty history");
+                return Ok(Vec::new());
+            }
+        };
 
         // Claude stores sessions at: ~/.claude/projects/{sanitized-cwd}/{uuid}.jsonl
         // Working directory is /workspace/repo, which becomes -workspace-repo

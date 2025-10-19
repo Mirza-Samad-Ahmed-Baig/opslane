@@ -96,13 +96,14 @@ impl Database {
         let session = sqlx::query_as::<_, crate::models::Session>(
             r#"
             INSERT INTO sessions (
-                id, name, local_repo_path, base_branch, status, is_deleted
-            ) VALUES (?, ?, ?, ?, 'created', 0)
+                id, name, local_repo_path, base_branch, initial_message, status, is_deleted
+            ) VALUES (?, ?, ?, ?, ?, 'created', 0)
             RETURNING
                 id, name, local_repo_path, session_repo_path, base_branch,
                 container_id, container_name, container_branch,
                 status, error_message,
                 volume_name, claude_session_id, last_activity_at,
+                initial_message,
                 created_at, updated_at, is_deleted
             "#,
         )
@@ -110,6 +111,7 @@ impl Database {
         .bind(&new.name)
         .bind(&new.local_repo_path)
         .bind(&new.base_branch)
+        .bind(&new.initial_message)
         .fetch_one(&self.pool)
         .await?;
 
@@ -126,6 +128,7 @@ impl Database {
                 container_id, container_name, container_branch,
                 status, error_message,
                 volume_name, claude_session_id, last_activity_at,
+                initial_message,
                 created_at, updated_at, is_deleted
             FROM sessions
             WHERE is_deleted = 0
@@ -148,6 +151,7 @@ impl Database {
                 container_id, container_name, container_branch,
                 status, error_message,
                 volume_name, claude_session_id, last_activity_at,
+                initial_message,
                 created_at, updated_at, is_deleted
             FROM sessions
             WHERE id = ?
@@ -616,6 +620,7 @@ mod tests {
             "claude_session_id",
             "last_activity_at",
             "session_repo_path",
+            "initial_message",
         ];
 
         assert_eq!(

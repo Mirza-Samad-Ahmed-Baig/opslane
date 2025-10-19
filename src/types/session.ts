@@ -10,12 +10,22 @@ export interface Session {
   id: string;
   name: string;
   local_repo_path: string;
+  session_repo_path: string | null;
   base_branch: string;
   container_id: string | null;
   container_name: string | null;
   container_branch: string | null;
   status: SessionStatus;
   error_message: string | null;
+
+  // Session persistence fields
+  volume_name: string | null;
+  claude_session_id: string | null;
+  last_activity_at: string | null;
+
+  // Optimistic UI: Store initial message for instant display (Phase 1)
+  initial_message: string | null;
+
   created_at: string; // ISO 8601 timestamp
   updated_at: string; // ISO 8601 timestamp
   is_deleted: boolean;

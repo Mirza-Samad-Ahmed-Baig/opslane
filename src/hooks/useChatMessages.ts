@@ -159,8 +159,24 @@ export function useChatMessages({
       } catch (err) {
         if (!cancelled) {
           const errorMsg = err instanceof Error ? err.message : 'Failed to load messages';
-          setError(errorMsg);
-          onError?.(errorMsg);
+
+          // Phase 1: Don't show error for brand new sessions where JSONL doesn't exist yet
+          // Common errors for new sessions:
+          // - "Session file not found" (expected for sessions being set up)
+          // - "No such file" (JSONL hasn't been created yet)
+          const isExpectedNewSessionError =
+            errorMsg.includes('Session file not found') ||
+            errorMsg.includes('No such file') ||
+            errorMsg.includes('not found') ||
+            errorMsg.includes('does not exist');
+
+          if (!isExpectedNewSessionError) {
+            // Only show real errors
+            setError(errorMsg);
+            onError?.(errorMsg);
+          }
+          // For expected errors, we just keep showing the optimistic message
+          console.debug('[useChatMessages] Expected error for new session:', errorMsg);
         }
       } finally {
         if (!cancelled) {

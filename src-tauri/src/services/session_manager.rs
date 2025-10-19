@@ -266,16 +266,297 @@ impl SessionManager {
         }
     }
 
-    /// Create a new session with container
+    /// Setup container for an existing session record
     ///
-    /// This orchestrates:
-    /// 1. Create database record (status="created")
+    /// Phase 1: Split from create_session to enable optimistic UI.
+    /// This method is called in a background task after the session record is created.
+    ///
+    /// Steps:
+    /// 1. Copy repository (respecting .gitignore)
     /// 2. Create Docker container with resource limits
     /// 3. Start container
-    /// 4. Update database with container info (status="ready")
+    /// 4. Configure Claude credentials
+    /// 5. Configure git safe.directory
+    /// 6. Update database with container info (status="ready")
     ///
-    /// On any failure after step 1, updates status="error" and error_message
-    #[allow(dead_code)] // Will be called from Tauri commands (Phase 4)
+    /// Emits progress events throughout the process.
+    pub async fn setup_container(&self, session_id: &str, app_handle: &AppHandle) -> Result<()> {
+        // Get session from database
+        let mut session = self.db.get_session(session_id).await?;
+
+        log::info!("========================================");
+        log::info!("setup_container called for session {session_id}");
+        log::info!("  name: {}", session.name);
+        log::info!("  path: {}", session.local_repo_path);
+        log::info!("  branch: {}", session.base_branch);
+        log::info!("========================================");
+
+        // Define total steps for progress tracking
+        const TOTAL_STEPS: u8 = 5;
+
+        // Calculate repo size for progress message
+        let repo_size_mb = Self::get_dir_size_mb(&session.local_repo_path).await;
+        let size_display = if repo_size_mb >= 1000.0 {
+            format!("{:.1} GB", repo_size_mb / 1000.0)
+        } else if repo_size_mb > 0.0 {
+            format!("{repo_size_mb:.0} MB")
+        } else {
+            "unknown size".to_string()
+        };
+
+        log::info!("Step 1: Copying repository (size: {size_display})...");
+
+        // Emit progress: Copying repository with size
+        log::info!("EMITTING EVENT: session-progress (copying) for session {session_id}");
+        let _ = app_handle.emit(
+            "session-progress",
+            json!({
+                "session_id": session_id,
+                "status": "copying",
+                "message": format!("Copying {} repository (respecting .gitignore)...", size_display),
+                "step": 1,
+                "total_steps": TOTAL_STEPS,
+            }),
+        );
+
+        // Step 1: Copy repository to session-specific location
+        let (session_repo_path, _copied_size_mb) = match self
+            .copy_repo_for_session(session_id, &session.local_repo_path)
+            .await
+        {
+            Ok((path, size)) => (path, size),
+            Err(e) => {
+                let error_msg = format!("Failed to copy repository: {e}");
+                log::error!("{error_msg}");
+
+                if let Err(db_err) = self.db.update_session_status(session_id, "error").await {
+                    log::error!("Failed to update session status: {db_err}");
+                }
+
+                return Err(anyhow!(error_msg));
+            }
+        };
+
+        // Update session with the copy path
+        session.session_repo_path = Some(session_repo_path.clone());
+
+        // Store in database
+        if let Err(e) = self
+            .db
+            .update_session_repo_path(session_id, &session_repo_path)
+            .await
+        {
+            log::error!("Failed to store session_repo_path in database: {e}");
+            // Non-fatal, continue
+        }
+
+        log::info!("Step 1 COMPLETE: Repository copied to {session_repo_path}");
+        log::info!("Step 2: Creating container...");
+
+        // Emit progress: Creating container
+        log::info!("EMITTING EVENT: session-progress (creating) for session {session_id}");
+        let _ = app_handle.emit(
+            "session-progress",
+            json!({
+                "session_id": session_id,
+                "status": "creating",
+                "message": "Creating container...",
+                "step": 2,
+                "total_steps": TOTAL_STEPS,
+            }),
+        );
+
+        // Generate container name
+        let container_name = Self::generate_container_name(session_id);
+
+        // Use session-specific limits or defaults
+        let cpu_limit = self.default_cpu_limit;
+        let memory_limit_mb = self.default_memory_limit_mb;
+
+        // Step 2: Create container with COPY (not original)
+        let container_id = match self
+            .docker
+            .create_container(
+                &container_name,
+                &session_repo_path,
+                cpu_limit,
+                memory_limit_mb,
+            )
+            .await
+        {
+            Ok(id) => {
+                log::info!("Created container {id} for session {session_id}");
+                id
+            }
+            Err(e) => {
+                // Update DB with error
+                let error_msg = format!("Failed to create container: {e}");
+                log::error!("{error_msg}");
+
+                // Clean up the copied repo
+                if let Err(cleanup_err) = tokio::fs::remove_dir_all(&session_repo_path).await {
+                    log::error!("Failed to cleanup session repo after container creation failure: {cleanup_err}");
+                }
+
+                if let Err(db_err) = self.db.update_session_status(session_id, "error").await {
+                    log::error!("Failed to update session status: {db_err}");
+                }
+
+                return Err(anyhow!(error_msg));
+            }
+        };
+
+        // Emit progress: Starting container
+        let _ = app_handle.emit(
+            "session-progress",
+            json!({
+                "session_id": session_id,
+                "status": "starting",
+                "message": "Starting container...",
+                "step": 3,
+                "total_steps": TOTAL_STEPS,
+            }),
+        );
+
+        // Step 3: Start container
+        if let Err(e) = self.docker.start_container(&container_id).await {
+            let error_msg = format!("Failed to start container: {e}");
+            log::error!("{error_msg}");
+
+            // Try to clean up container
+            if let Err(cleanup_err) = self.docker.remove_container(&container_id).await {
+                log::error!("Failed to cleanup container after start failure: {cleanup_err}");
+            }
+
+            // Update DB with error
+            if let Err(db_err) = self.db.update_session_status(session_id, "error").await {
+                log::error!("Failed to update session status: {db_err}");
+            }
+
+            return Err(anyhow!(error_msg));
+        }
+
+        log::info!("Started container {container_id} for session {session_id}");
+
+        // Step 4: Setup Claude credentials in container
+        log::info!("Setting up Claude credentials for session {session_id}");
+
+        // Emit progress: Setting up credentials
+        let _ = app_handle.emit(
+            "session-progress",
+            json!({
+                "session_id": session_id,
+                "status": "configuring",
+                "message": "Setting up Claude credentials...",
+                "step": 4,
+                "total_steps": TOTAL_STEPS,
+            }),
+        );
+
+        // Try to read and setup credentials - but don't fail session creation if this fails
+        match read_claude_credentials_from_keychain() {
+            Ok(credentials_json) => {
+                // Write credentials to container
+                if let Err(e) = self
+                    .docker
+                    .setup_claude_credentials(&container_id, &credentials_json)
+                    .await
+                {
+                    log::error!("Failed to setup credentials (continuing anyway): {e}");
+                    let _ = app_handle.emit(
+                        "session-progress",
+                        json!({
+                            "session_id": session_id,
+                            "status": "warning",
+                            "message": "Claude credentials not configured. Please log in to Claude CLI."
+                        }),
+                    );
+                } else {
+                    log::info!("Claude credentials configured successfully");
+                }
+            }
+            Err(e) => {
+                log::warn!("Could not read Claude credentials from keychain: {e}");
+                log::warn!("Session will be created but Claude commands may fail");
+                let _ = app_handle.emit(
+                    "session-progress",
+                    json!({
+                        "session_id": session_id,
+                        "status": "warning",
+                        "message": "Claude credentials not found. Please log in to Claude CLI."
+                    }),
+                );
+            }
+        }
+
+        // Step 5: Configure git safe.directory to prevent ownership errors
+        log::info!("Configuring git for session {session_id}");
+        if let Err(e) = self
+            .docker
+            .configure_git_safe_directory(&container_id)
+            .await
+        {
+            log::warn!("Failed to configure git safe.directory (continuing anyway): {e}");
+        }
+
+        // Step 6: Update database with container info and set status to "ready"
+        if let Err(e) = self
+            .db
+            .update_session_container(session_id, &container_id, &container_name, "main")
+            .await
+        {
+            log::error!("Failed to update container info: {e}");
+            // Container is running but DB not updated - try to cleanup
+            if let Err(stop_err) = self.docker.stop_container(&container_id).await {
+                log::error!("Failed to stop container: {stop_err}");
+            }
+            if let Err(rm_err) = self.docker.remove_container(&container_id).await {
+                log::error!("Failed to remove container: {rm_err}");
+            }
+            if let Err(db_err) = self.db.update_session_status(session_id, "error").await {
+                log::error!(
+                    "Failed to update session status after container info update failure: {db_err}"
+                );
+            }
+            return Err(anyhow!("Failed to update session with container info: {e}"));
+        }
+
+        if let Err(e) = self.db.update_session_status(session_id, "ready").await {
+            log::error!("Failed to update session status to ready: {e}");
+            return Err(anyhow!("Session created but status update failed: {e}"));
+        }
+
+        log::info!("Session {session_id} is ready (container: {container_id})");
+
+        log::info!("========================================");
+        log::info!("EMITTING FINAL EVENT: session-progress (ready)");
+        log::info!("  session_id: {session_id}");
+        log::info!("  status: ready");
+        log::info!("  container: {container_id}");
+        log::info!("========================================");
+
+        // Emit progress: Container ready
+        let _ = app_handle.emit(
+            "session-progress",
+            json!({
+                "session_id": session_id,
+                "status": "ready",
+                "message": "Session is ready!",
+                "step": 5,
+                "total_steps": TOTAL_STEPS,
+            }),
+        );
+
+        log::info!("Event emitted successfully");
+
+        Ok(())
+    }
+
+    /// DEPRECATED: Use create_session command + setup_container instead
+    ///
+    /// This method is kept for backward compatibility but should not be used.
+    /// New code should create session in DB first, then call setup_container in background.
+    #[allow(dead_code)]
     pub async fn create_session(&self, new: NewSession, app_handle: AppHandle) -> Result<Session> {
         log::info!("========================================");
         log::info!("create_session called");

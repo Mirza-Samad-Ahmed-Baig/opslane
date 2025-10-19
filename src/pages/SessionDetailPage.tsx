@@ -1,5 +1,5 @@
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { useEffect, useMemo } from 'react';
 import { ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
@@ -9,6 +9,7 @@ import { MessagePanel } from '@/components/MessagePanel';
 import { DiffViewer } from '@/components/DiffViewer';
 import { SessionStatusBadge } from '@/components/SessionStatusBadge';
 import { logger } from '@/utils/logger';
+import type { DisplayMessage } from '@/types/messages';
 
 /**
  * SessionDetailPage - Three-column layout for session detail view
@@ -26,20 +27,32 @@ import { logger } from '@/utils/logger';
 export function SessionDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const location = useLocation();
   const { data: session, isLoading, error } = useSession(id!);
 
-  // Extract initial message from location state
-  const initialMessage = location.state?.initialMessage;
-  const isNewSession = location.state?.isNewSession;
-
-  // Determine if session is setting up based on actual status, not navigation state
+  // Determine if session is setting up based on actual status
   const isSettingUp = session && session.status !== 'ready' && session.status !== 'error';
+
+  // Phase 1: Create optimistic message from session.initial_message
+  // This provides instant feedback while container is being set up in the background
+  const optimisticMessage = useMemo((): DisplayMessage | null => {
+    if (!session?.initial_message) return null;
+
+    return {
+      id: 'optimistic-initial',
+      uuid: 'optimistic-initial',
+      role: 'user',
+      text: session.initial_message,
+      timestamp: session.created_at,
+      tools: [],
+      status: 'complete',
+    };
+  }, [session?.initial_message, session?.created_at]);
 
   logger.debug('[SessionDetail] Session status', {
     sessionId: id,
     sessionStatus: session?.status,
     isSettingUp,
+    hasOptimisticMessage: !!optimisticMessage,
   });
 
   // Keyboard shortcut: Esc to go back (only if no dialog is open)
@@ -117,14 +130,30 @@ export function SessionDetailPage() {
       )}
 
       {/* Three-column layout (Design Principle #5: Progressive Disclosure) */}
-      <div className="flex-1 grid grid-cols-[minmax(180px,240px)_1fr_minmax(320px,480px)] overflow-hidden">
-        <SessionList onCreateClick={() => navigate('/')} activeSessionId={session.id} />
+      {/* BLOCKER FIX: Responsive layout for mobile/tablet/desktop */}
+      <div
+        className="flex-1 grid overflow-hidden
+        grid-cols-1
+        md:grid-cols-[minmax(180px,240px)_1fr]
+        lg:grid-cols-[minmax(180px,240px)_1fr_minmax(320px,480px)]
+      "
+      >
+        {/* Session list - hidden on mobile, visible on tablet+ */}
+        <div className="hidden md:block">
+          <SessionList onCreateClick={() => navigate('/')} activeSessionId={session.id} />
+        </div>
+
+        {/* Message panel - always visible */}
         <MessagePanel
           sessionId={session.id}
-          initialMessage={isNewSession ? initialMessage : undefined}
+          optimisticMessage={optimisticMessage}
           isSettingUp={isSettingUp}
         />
-        <DiffViewer sessionId={session.id} />
+
+        {/* Diff viewer - hidden on mobile/tablet, visible on desktop */}
+        <div className="hidden lg:block">
+          <DiffViewer sessionId={session.id} />
+        </div>
       </div>
     </div>
   );

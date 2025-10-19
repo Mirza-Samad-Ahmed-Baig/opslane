@@ -37,6 +37,9 @@ pub struct Session {
     pub claude_session_id: Option<String>, // Claude's session ID
     pub last_activity_at: Option<String>, // For idle detection
 
+    // Optimistic UI: Store initial message for instant display
+    pub initial_message: Option<String>,
+
     pub created_at: String,
     pub updated_at: String,
     pub is_deleted: bool,

@@ -1,8 +1,12 @@
 use crate::models::{NewSession, Session};
 use crate::state::AppState;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 /// Create a new session with Docker container
+///
+/// Phase 1 Optimistic UI: Creates session in DB immediately, then spawns background task
+/// for container setup and initial message sending. This eliminates race conditions and
+/// provides instant feedback to the user.
 #[tauri::command]
 pub async fn create_session(
     new_session: NewSession,
@@ -11,68 +15,104 @@ pub async fn create_session(
 ) -> Result<Session, String> {
     log::info!("Creating session: {}", new_session.name);
 
-    // Store initial_message before creating session (it's consumed by create_session)
+    // Store initial_message for background task
     let initial_message = new_session.initial_message.clone();
 
-    let session = state
-        .session_manager
-        .create_session(new_session, app_handle)
-        .await
-        .map_err(|e| {
-            log::error!("Failed to create session: {e}");
-            format!("Failed to create session: {e}")
-        })?;
+    // 1. Create session record in DB immediately (fast, ~10ms)
+    //    This includes the initial_message field for optimistic UI display
+    let session = state.db.create_session(new_session).await.map_err(|e| {
+        log::error!("Failed to create session in DB: {e}");
+        format!("Failed to create session: {e}")
+    })?;
 
-    // If initial_message is provided, send it to Claude
-    if let Some(message) = initial_message {
-        log::info!(
-            "Sending initial message to session {}: {} chars",
-            session.id,
-            message.len()
-        );
+    log::info!(
+        "Session {} created in DB with status={}",
+        session.id,
+        session.status
+    );
 
-        // Send message SYNCHRONOUSLY (wait for completion)
-        // We consume the stream receiver but don't need to process it here
-        // The Claude CLI writes directly to JSONL, which is what we need
-        let mut receiver = state
-            .claude_service
-            .send_message(&session.id, message)
+    // 2. Spawn background task for container setup and message sending
+    let session_id = session.id.clone();
+    let session_manager = state.session_manager.clone();
+    let claude_service = state.claude_service.clone();
+    let db = state.db.clone(); // BLOCKER FIX: Clone DB for error handling
+    let app_handle_clone = app_handle.clone();
+
+    tokio::spawn(async move {
+        log::info!("Background task started for session {session_id}");
+
+        // Setup container (emits progress events)
+        if let Err(e) = session_manager
+            .setup_container(&session_id, &app_handle_clone)
             .await
-            .map_err(|e| {
-                log::error!(
-                    "Failed to send initial message for session {}: {e}",
-                    session.id
-                );
-                format!("Failed to send initial message: {e}")
-            })?;
+        {
+            log::error!("Container setup failed for session {session_id}: {e}");
 
-        // Drain the receiver to ensure command completes
-        // Check for errors in the stream
-        let mut had_error = false;
-        let mut error_message = String::new();
+            // BLOCKER FIX: Update database to reflect error state
+            if let Err(db_err) = db.update_session_status(&session_id, "error").await {
+                log::error!("Failed to update session status to error: {db_err}");
+            }
 
-        while let Some(event) = receiver.recv().await {
-            if let crate::services::claude_service::StreamEvent::Error { message } = event {
-                had_error = true;
-                error_message = message;
-                break;
+            // Emit error event to frontend
+            let _ = app_handle_clone.emit(
+                "session-error",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "error": e.to_string(),
+                }),
+            );
+            return;
+        }
+
+        log::info!("Container setup complete for session {session_id}");
+
+        // Send initial message if provided
+        if let Some(message) = initial_message {
+            log::info!(
+                "Sending initial message for session {}: {} chars",
+                session_id,
+                message.len()
+            );
+
+            match claude_service.send_message(&session_id, message).await {
+                Ok(mut receiver) => {
+                    // Drain receiver to ensure command completes
+                    while let Some(event) = receiver.recv().await {
+                        if let crate::services::claude_service::StreamEvent::Error { message } =
+                            event
+                        {
+                            log::error!(
+                                "Claude command failed for session {session_id}: {message}"
+                            );
+                            let _ = app_handle_clone.emit(
+                                "session-error",
+                                serde_json::json!({
+                                    "session_id": session_id,
+                                    "error": format!("Failed to send message: {message}"),
+                                }),
+                            );
+                            return;
+                        }
+                    }
+                    log::info!("Initial message sent successfully for session {session_id}");
+                }
+                Err(e) => {
+                    log::error!("Failed to send initial message for session {session_id}: {e}");
+                    let _ = app_handle_clone.emit(
+                        "session-error",
+                        serde_json::json!({
+                            "session_id": session_id,
+                            "error": format!("Failed to send message: {e}"),
+                        }),
+                    );
+                }
             }
         }
 
-        if had_error {
-            log::error!(
-                "Claude command failed for session {}: {error_message}",
-                session.id
-            );
-            return Err(format!("Claude command failed: {error_message}"));
-        }
+        log::info!("Background task complete for session {session_id}");
+    });
 
-        log::info!(
-            "Initial message sent successfully for session {}",
-            session.id
-        );
-    }
-
+    // 3. Return session immediately (frontend can navigate and show optimistic message)
     Ok(session)
 }
 
