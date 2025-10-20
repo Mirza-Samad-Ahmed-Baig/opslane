@@ -179,7 +179,8 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
                 if (!message) return null;
                 return (
                   <div
-                    key={message.id}
+                    // Use uuid (globally unique) instead of id (API response ID, can duplicate)
+                    key={message.uuid}
                     data-index={virtualRow.index}
                     style={{
                       position: 'absolute',
@@ -208,7 +209,8 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
           // Regular rendering for <50 messages (simpler, no virtualization overhead)
           <div className="space-y-4 p-4">
             {displayMessages.map((message) => (
-              <ChatMessage key={message.id} message={message} />
+              // Use uuid (globally unique) instead of id (API response ID, can duplicate)
+              <ChatMessage key={message.uuid} message={message} />
             ))}
 
             {/* Setup indicator */}

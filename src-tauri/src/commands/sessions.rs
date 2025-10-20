@@ -76,8 +76,17 @@ pub async fn create_session(
 
             match claude_service.send_message(&session_id, message).await {
                 Ok(mut receiver) => {
-                    // Drain receiver to ensure command completes
+                    // ✅ CRITICAL FIX: Forward ALL stream events to frontend
+                    // Previously we were draining events without forwarding them
+                    let event_channel = format!("message-stream-{session_id}");
+
                     while let Some(event) = receiver.recv().await {
+                        // Forward event to frontend
+                        if let Err(e) = app_handle_clone.emit(&event_channel, &event) {
+                            log::warn!("Failed to emit stream event to frontend: {e}");
+                        }
+
+                        // Check for errors
                         if let crate::services::claude_service::StreamEvent::Error { message } =
                             event
                         {
