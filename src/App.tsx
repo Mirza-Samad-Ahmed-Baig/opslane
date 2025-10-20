@@ -33,6 +33,7 @@ function HomePage() {
   const [quickStartMessage, setQuickStartMessage] = useState('');
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isBrowsing, setIsBrowsing] = useState(false);
   const { data: dockerAvailable } = useDockerStatus();
   const { data: projects } = useProjects();
   const getOrCreateProject = useGetOrCreateProject();
@@ -136,6 +137,7 @@ function HomePage() {
   // Open directory picker and create/get project
   const handleBrowseFolder = async () => {
     try {
+      setIsBrowsing(true);
       const selected = await open({
         directory: true,
         multiple: false,
@@ -151,6 +153,8 @@ function HomePage() {
     } catch (error) {
       logger.error('Failed to open directory picker or create project', error as Error);
       setError('Failed to select directory');
+    } finally {
+      setIsBrowsing(false);
     }
   };
 
@@ -313,10 +317,12 @@ function HomePage() {
                         }
                       }
                     }}
-                    disabled={getOrCreateProject.isPending}
+                    disabled={isBrowsing || getOrCreateProject.isPending}
                   >
                     <SelectTrigger className="w-full sm:flex-1">
-                      <SelectValue placeholder="Select a repository..." />
+                      <SelectValue
+                        placeholder={isBrowsing ? 'Browsing...' : 'Select a repository...'}
+                      />
                     </SelectTrigger>
                     <SelectContent>
                       {projects && projects.length > 0 && (
@@ -335,18 +341,27 @@ function HomePage() {
                           </SelectItem>
                         </>
                       )}
-                      <SelectItem value="__browse__">Browse for new project...</SelectItem>
+                      <SelectItem value="__browse__" disabled={isBrowsing}>
+                        {isBrowsing ? (
+                          <span className="flex items-center gap-2">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            Browsing...
+                          </span>
+                        ) : (
+                          'Browse for new project...'
+                        )}
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 ) : (
-                  <div className="w-full sm:flex-1 flex items-center gap-2 px-3 py-2 border border-input bg-muted/50 rounded-md h-9">
+                  <div className="w-full sm:flex-1 flex items-center gap-2 px-3 py-2 border border-input bg-muted/50 rounded-md h-9 transition-colors hover:bg-muted/70">
                     <FolderOpen className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                     <span className="text-sm font-medium truncate flex-1">
                       {selectedProject.name}
                     </span>
                     <button
                       onClick={handleClearSelection}
-                      className="text-xs text-muted-foreground hover:text-foreground underline flex-shrink-0"
+                      className="text-xs text-muted-foreground hover:text-foreground underline flex-shrink-0 transition-colors"
                     >
                       Change
                     </button>
