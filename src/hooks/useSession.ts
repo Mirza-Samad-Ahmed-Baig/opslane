@@ -1,16 +1,58 @@
-import { useQuery } from '@tanstack/react-query';
+import { useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { Session } from '@/types';
 import { logger } from '@/utils/logger';
+
+/**
+ * Event payload for session status changes
+ */
+interface SessionStatusEvent {
+  session_id: string;
+  status: string;
+  timestamp: string;
+}
 
 /**
  * Hook to fetch a single session by ID
  * Used in the session detail page
  *
- * Polls every second while session is in transitional states (created, cloning)
- * to update the UI when status changes to ready
+ * Phase 3: Event-driven updates instead of polling
+ * Listens to "session-status-changed" events from backend
  */
 export function useSession(sessionId: string) {
+  const queryClient = useQueryClient();
+
+  // Listen for status change events
+  useEffect(() => {
+    if (!sessionId) return;
+
+    let unlisten: UnlistenFn | undefined;
+
+    const setupListener = async () => {
+      unlisten = await listen<SessionStatusEvent>('session-status-changed', (event) => {
+        if (event.payload.session_id === sessionId) {
+          logger.info('Session status changed', {
+            sessionId,
+            status: event.payload.status,
+          });
+
+          // Invalidate query to trigger refetch
+          queryClient.invalidateQueries({
+            queryKey: ['session', sessionId],
+          });
+        }
+      });
+    };
+
+    setupListener();
+
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, [sessionId, queryClient]);
+
   return useQuery({
     queryKey: ['session', sessionId],
     queryFn: async () => {
@@ -25,18 +67,6 @@ export function useSession(sessionId: string) {
       }
     },
     enabled: !!sessionId,
-    // Poll frequently while session is being set up, stop when ready or errored
-    refetchInterval: (query) => {
-      const session = query.state.data;
-      if (!session) return false;
-
-      // Poll every 1 second if session is in transitional state
-      if (session.status === 'created' || session.status === 'cloning') {
-        return 1000;
-      }
-
-      // Stop polling once session is ready or errored
-      return false;
-    },
+    // Phase 3: No polling - updates driven by events
   });
 }

@@ -1,5 +1,6 @@
 use crate::models::{NewSession, Session};
 use crate::state::AppState;
+use chrono::Utc;
 use tauri::{AppHandle, Emitter, State};
 
 /// Create a new session with Docker container
@@ -31,6 +32,15 @@ pub async fn create_session(
         session.status
     );
 
+    // Emit session-created event for frontend to update session list
+    let _ = app_handle.emit(
+        "session-created",
+        serde_json::json!({
+            "session_id": session.id,
+            "timestamp": Utc::now().to_rfc3339(),
+        }),
+    );
+
     // 2. Spawn background task for container setup and message sending
     let session_id = session.id.clone();
     let session_manager = state.session_manager.clone();
@@ -53,7 +63,17 @@ pub async fn create_session(
                 log::error!("Failed to update session status to error: {db_err}");
             }
 
-            // Emit error event to frontend
+            // Emit session-status-changed event for frontend hooks
+            let _ = app_handle_clone.emit(
+                "session-status-changed",
+                serde_json::json!({
+                    "session_id": &session_id,
+                    "status": "error",
+                    "timestamp": Utc::now().to_rfc3339(),
+                }),
+            );
+
+            // Emit error event to frontend (for error details)
             let _ = app_handle_clone.emit(
                 "session-error",
                 serde_json::json!({
@@ -156,7 +176,11 @@ pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<Session>, S
 
 /// Delete a session and cleanup its container
 #[tauri::command]
-pub async fn delete_session(session_id: String, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn delete_session(
+    session_id: String,
+    state: State<'_, AppState>,
+    app_handle: AppHandle,
+) -> Result<(), String> {
     log::info!("Deleting session: {session_id}");
 
     state
@@ -166,7 +190,18 @@ pub async fn delete_session(session_id: String, state: State<'_, AppState>) -> R
         .map_err(|e| {
             log::error!("Failed to delete session {session_id}: {e}");
             format!("Failed to delete session: {e}")
-        })
+        })?;
+
+    // Emit session-deleted event for frontend to update session list
+    let _ = app_handle.emit(
+        "session-deleted",
+        serde_json::json!({
+            "session_id": session_id,
+            "timestamp": Utc::now().to_rfc3339(),
+        }),
+    );
+
+    Ok(())
 }
 
 /// Check if Docker is available

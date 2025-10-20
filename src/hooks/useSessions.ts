@@ -1,5 +1,7 @@
+import { useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
 import type { Session, NewSession } from '@/types';
 import { logger } from '@/utils/logger';
@@ -28,10 +30,63 @@ function formatErrorMessage(error: unknown): string {
 }
 
 /**
+ * Event payload for session events
+ */
+interface SessionEvent {
+  session_id: string;
+  timestamp: string;
+}
+
+interface SessionStatusEvent extends SessionEvent {
+  status: string;
+}
+
+/**
  * Query hook for fetching all sessions
- * Auto-refreshes every 5 seconds to catch status updates
+ *
+ * Phase 3: Event-driven updates instead of polling
+ * Listens to session-status-changed, session-created, and session-deleted events
  */
 export function useSessions() {
+  const queryClient = useQueryClient();
+
+  // Listen for session events
+  useEffect(() => {
+    const unlisteners: UnlistenFn[] = [];
+
+    const setupListeners = async () => {
+      // Listen for status changes
+      const statusUnlisten = await listen<SessionStatusEvent>('session-status-changed', (event) => {
+        logger.info('Session status changed', {
+          sessionId: event.payload.session_id,
+          status: event.payload.status,
+        });
+        queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      });
+      unlisteners.push(statusUnlisten);
+
+      // Listen for new sessions
+      const createdUnlisten = await listen<SessionEvent>('session-created', (event) => {
+        logger.info('Session created', { sessionId: event.payload.session_id });
+        queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      });
+      unlisteners.push(createdUnlisten);
+
+      // Listen for deleted sessions
+      const deletedUnlisten = await listen<SessionEvent>('session-deleted', (event) => {
+        logger.info('Session deleted', { sessionId: event.payload.session_id });
+        queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      });
+      unlisteners.push(deletedUnlisten);
+    };
+
+    setupListeners();
+
+    return () => {
+      unlisteners.forEach((unlisten) => unlisten());
+    };
+  }, [queryClient]);
+
   return useQuery({
     queryKey: ['sessions'],
     queryFn: async () => {
@@ -45,8 +100,7 @@ export function useSessions() {
         throw error;
       }
     },
-    // Poll every 5 seconds for status updates (created → ready)
-    refetchInterval: 5000,
+    // Phase 3: No polling - updates driven by events
   });
 }
 

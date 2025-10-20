@@ -2,11 +2,23 @@ use crate::database::Database;
 use crate::models::{NewSession, Session};
 use crate::services::DockerService;
 use anyhow::{anyhow, Result};
+use chrono::Utc;
 use ignore::WalkBuilder;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::Path;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
+
+/// Event payload for session status changes
+///
+/// Phase 3: Used for event-driven frontend updates instead of polling
+#[derive(Clone, Serialize, Deserialize)]
+struct SessionStatusEvent {
+    session_id: String,
+    status: String,
+    timestamp: String,
+}
 
 /// Read Claude credentials from macOS Keychain
 ///
@@ -84,6 +96,25 @@ impl SessionManager {
     fn generate_container_name(session_id: &str) -> String {
         let short_uuid = &session_id[..8];
         format!("opslane-session-{short_uuid}")
+    }
+
+    /// Emit session status change event to frontend
+    ///
+    /// Phase 3: Event-driven updates to replace polling
+    /// Emits "session-status-changed" event that frontend hooks listen to
+    fn emit_status_event(&self, app_handle: &AppHandle, session_id: &str, status: &str) {
+        log::info!("Emitting session-status-changed event: session={session_id}, status={status}");
+
+        if let Err(e) = app_handle.emit(
+            "session-status-changed",
+            SessionStatusEvent {
+                session_id: session_id.to_string(),
+                status: status.to_string(),
+                timestamp: Utc::now().to_rfc3339(),
+            },
+        ) {
+            log::warn!("Failed to emit status event: {e}");
+        }
     }
 
     /// Calculate directory size in megabytes
@@ -333,6 +364,9 @@ impl SessionManager {
                     log::error!("Failed to update session status: {db_err}");
                 }
 
+                // Emit status change event
+                self.emit_status_event(app_handle, session_id, "error");
+
                 return Err(anyhow!(error_msg));
             }
         };
@@ -402,6 +436,9 @@ impl SessionManager {
                     log::error!("Failed to update session status: {db_err}");
                 }
 
+                // Emit status change event
+                self.emit_status_event(app_handle, session_id, "error");
+
                 return Err(anyhow!(error_msg));
             }
         };
@@ -432,6 +469,9 @@ impl SessionManager {
             if let Err(db_err) = self.db.update_session_status(session_id, "error").await {
                 log::error!("Failed to update session status: {db_err}");
             }
+
+            // Emit status change event
+            self.emit_status_event(app_handle, session_id, "error");
 
             return Err(anyhow!(error_msg));
         }
@@ -518,15 +558,26 @@ impl SessionManager {
                     "Failed to update session status after container info update failure: {db_err}"
                 );
             }
+
+            // Emit status change event
+            self.emit_status_event(app_handle, session_id, "error");
+
             return Err(anyhow!("Failed to update session with container info: {e}"));
         }
 
         if let Err(e) = self.db.update_session_status(session_id, "ready").await {
             log::error!("Failed to update session status to ready: {e}");
+
+            // Emit status change event (though DB update failed, try to notify frontend)
+            self.emit_status_event(app_handle, session_id, "error");
+
             return Err(anyhow!("Session created but status update failed: {e}"));
         }
 
         log::info!("Session {session_id} is ready (container: {container_id})");
+
+        // Emit status change event
+        self.emit_status_event(app_handle, session_id, "ready");
 
         log::info!("========================================");
         log::info!("EMITTING FINAL EVENT: session-progress (ready)");
