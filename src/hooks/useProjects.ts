@@ -30,7 +30,7 @@ export function useGetOrCreateProject() {
     mutationFn: async (localRepoPath: string) => {
       logger.debug('[useGetOrCreateProject] Getting or creating project', { localRepoPath });
       const project = await invoke<Project>('get_or_create_project', {
-        localRepoPath,
+        local_repo_path: localRepoPath,
       });
       logger.debug('[useGetOrCreateProject] Project resolved', { project });
       return project;
@@ -59,7 +59,7 @@ export function useProject(projectId: string | undefined) {
         throw new Error('Project ID is required');
       }
       logger.debug('[useProject] Fetching project', { projectId });
-      const project = await invoke<Project>('get_project', { projectId });
+      const project = await invoke<Project>('get_project', { project_id: projectId });
       return project;
     },
     enabled: !!projectId,
@@ -75,7 +75,7 @@ export function useDeleteProject() {
   return useMutation({
     mutationFn: async (projectId: string) => {
       logger.debug('[useDeleteProject] Deleting project', { projectId });
-      await invoke('delete_project', { projectId });
+      await invoke('delete_project', { project_id: projectId });
     },
     onSuccess: () => {
       // Invalidate all project and session queries
