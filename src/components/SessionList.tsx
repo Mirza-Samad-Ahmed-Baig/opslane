@@ -26,7 +26,7 @@ export function SessionList({ onCreateClick, activeSessionId }: SessionListProps
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center p-8">
+      <div className="h-full flex flex-col items-center justify-center border-r bg-muted/30 p-8">
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
       </div>
     );
@@ -34,7 +34,7 @@ export function SessionList({ onCreateClick, activeSessionId }: SessionListProps
 
   if (!sessions || sessions.length === 0) {
     return (
-      <div className="p-4">
+      <div className="h-full flex flex-col border-r bg-muted/30 p-4">
         <p className="text-xs text-muted-foreground mb-3">No sessions yet</p>
         <button onClick={onCreateClick} className="text-xs text-primary hover:underline">
           Create your first session
@@ -49,13 +49,13 @@ export function SessionList({ onCreateClick, activeSessionId }: SessionListProps
   const projectGroups = [
     {
       name: 'Recent Sessions',
-      sessions: sessions.slice(0, 10), // Show last 10 sessions
+      sessions: sessions, // Show all sessions with scrolling
     },
   ];
 
   return (
-    <div className="border-r bg-muted/30">
-      <div className="py-2">
+    <div className="h-full flex flex-col border-r bg-muted/30">
+      <div className="flex-1 overflow-y-auto py-2" role="navigation" aria-label="Session list">
         {projectGroups.map((project) => (
           <div key={project.name} className="mb-4">
             {/* Project Header */}
@@ -70,6 +70,8 @@ export function SessionList({ onCreateClick, activeSessionId }: SessionListProps
                 <button
                   key={session.id}
                   onClick={() => navigate(`/session/${session.id}`)}
+                  aria-label={`${session.name}, status: ${session.status}`}
+                  aria-current={activeSessionId === session.id ? 'page' : undefined}
                   className={cn(
                     'w-full px-3 py-2 flex items-center gap-2 hover:bg-muted/50 transition-colors text-left',
                     'group',
@@ -85,7 +87,10 @@ export function SessionList({ onCreateClick, activeSessionId }: SessionListProps
                       session.status === 'error' && 'fill-red-500 text-red-500'
                     )}
                   />
-                  <span className="text-sm truncate flex-1 group-hover:text-foreground">
+                  <span
+                    className="text-sm truncate flex-1 group-hover:text-foreground"
+                    title={session.name}
+                  >
                     {session.name}
                   </span>
                 </button>

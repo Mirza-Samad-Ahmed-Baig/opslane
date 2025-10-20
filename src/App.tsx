@@ -217,8 +217,8 @@ function HomePage() {
 
       {/* Main Layout - Left nav + Center quick-start */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left Navigation Panel - Session List */}
-        <div className="w-60 flex-shrink-0 flex flex-col overflow-auto">
+        {/* Left Navigation Panel - Session List - hidden on mobile, visible on tablet+ */}
+        <div className="hidden md:flex w-60 flex-shrink-0 flex-col overflow-auto">
           <SessionList onCreateClick={() => setShowNewDialog(true)} />
         </div>
 

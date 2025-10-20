@@ -265,7 +265,7 @@ export function SessionDetailPage() {
       "
       >
         {/* Session list - hidden on mobile, visible on tablet+ */}
-        <div className="hidden md:block">
+        <div className="hidden md:block h-full">
           <SessionList onCreateClick={() => navigate('/')} activeSessionId={session.id} />
         </div>
 
