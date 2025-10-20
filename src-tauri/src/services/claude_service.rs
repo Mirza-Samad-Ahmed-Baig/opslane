@@ -52,7 +52,7 @@ pub struct ParsedMessage {
 
 /// Content block types found in Claude messages
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub enum ContentBlock {
     #[serde(rename = "text")]
     Text { text: String },

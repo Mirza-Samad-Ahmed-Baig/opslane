@@ -55,6 +55,9 @@ export function useChatMessages({
   // Use ref to avoid race condition with effect dependencies
   const previousMessageLengthRef = useRef(0);
 
+  // Store all tool result blocks for cross-message matching
+  const allToolResults = useRef<Map<string, { content: string; isError: boolean }>>(new Map());
+
   // Transform backend message to display format
   const transformMessage = useCallback((envelope: MessageEnvelope): DisplayMessage | null => {
     // WHITELIST: Only display conversation and file history messages
@@ -80,21 +83,16 @@ export function useChatMessages({
     const text = textBlocks.map((b) => b.text).join('\n');
 
     const toolUseBlocks = envelope.contentBlocks.filter(isToolUseBlock);
-    const toolResultBlocks = envelope.contentBlocks.filter(isToolResultBlock);
 
+    // Match tool_use blocks with results from global map (cross-message matching)
     const tools: ToolExecution[] = toolUseBlocks.map((toolUse) => {
-      const result = toolResultBlocks.find((r) => r.toolUseId === toolUse.id);
+      const result = allToolResults.current.get(toolUse.id);
 
       return {
         id: toolUse.id,
         name: toolUse.name,
         input: toolUse.input,
-        result: result
-          ? {
-              content: result.content,
-              isError: result.isError,
-            }
-          : undefined,
+        result: result,
         expanded: false, // Default collapsed (Progressive Disclosure)
       };
     });
@@ -140,7 +138,19 @@ export function useChatMessages({
 
         if (cancelled) return;
 
-        // Transform to DisplayMessage format
+        // PASS 1: Collect all tool_result blocks from ALL messages
+        allToolResults.current.clear();
+        envelopes.forEach((envelope) => {
+          const toolResultBlocks = envelope.contentBlocks.filter(isToolResultBlock);
+          toolResultBlocks.forEach((result) => {
+            allToolResults.current.set(result.toolUseId, {
+              content: result.content,
+              isError: result.isError,
+            });
+          });
+        });
+
+        // PASS 2: Transform to DisplayMessage format (tool_use blocks will find their results)
         const displayMessages = envelopes
           .map(transformMessage)
           .filter((msg): msg is DisplayMessage => msg !== null);
@@ -213,6 +223,34 @@ export function useChatMessages({
                 try {
                   // Parse JSONL line as MessageEnvelope
                   const envelope = JSON.parse(line) as MessageEnvelope;
+
+                  // Collect tool_result blocks into global map
+                  const toolResultBlocks = envelope.contentBlocks.filter(isToolResultBlock);
+                  toolResultBlocks.forEach((result) => {
+                    allToolResults.current.set(result.toolUseId, {
+                      content: result.content,
+                      isError: result.isError,
+                    });
+                  });
+
+                  // If this message has tool_result blocks, update previous messages with matching tool_use
+                  if (toolResultBlocks.length > 0) {
+                    for (let i = 0; i < updatedMessages.length; i++) {
+                      const msg = updatedMessages[i];
+                      if (msg && msg.tools) {
+                        const updatedTools = msg.tools.map((tool) => {
+                          const result = allToolResults.current.get(tool.id);
+                          return result
+                            ? {
+                                ...tool,
+                                result: { content: result.content, isError: result.isError },
+                              }
+                            : tool;
+                        });
+                        updatedMessages[i] = { ...msg, tools: updatedTools } as DisplayMessage;
+                      }
+                    }
+                  }
 
                   // Transform to DisplayMessage (with filtering)
                   const displayMessage = transformMessage(envelope);
@@ -287,7 +325,7 @@ export function useChatMessages({
         unlisten();
       }
     };
-  }, [sessionId, onStreamComplete, onError]);
+  }, [sessionId, transformMessage, onStreamComplete, onError]);
 
   // Send message function
   const sendMessage = useCallback(

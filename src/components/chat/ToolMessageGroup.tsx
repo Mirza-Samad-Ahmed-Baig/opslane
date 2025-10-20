@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { ChevronRight, Package } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ToolExecution } from '@/types/messages';
@@ -6,8 +6,11 @@ import { getToolWidget } from './tools/ToolWidgetRegistry';
 
 interface ToolMessageGroupProps {
   tools: ToolExecution[];
-  messageId: string; // Used in Phase 3 for collapse state persistence
-  defaultCollapsed?: boolean;
+  messageId: string;
+  isGroupCollapsed: (groupId: string) => boolean;
+  isToolCollapsed: (toolId: string) => boolean;
+  onGroupToggle: (groupId: string, currentlyCollapsed: boolean) => void;
+  onToolToggle: (toolId: string, currentlyCollapsed: boolean) => void;
 }
 
 /**
@@ -19,28 +22,26 @@ interface ToolMessageGroupProps {
  */
 export function ToolMessageGroup({
   tools,
-  messageId: _messageId, // Reserved for Phase 3 collapse state
-  defaultCollapsed = false,
+  messageId,
+  isGroupCollapsed,
+  isToolCollapsed,
+  onGroupToggle,
+  onToolToggle,
 }: ToolMessageGroupProps) {
-  void _messageId; // Suppress unused warning - will be used in Phase 3
-  const [isGroupExpanded, setIsGroupExpanded] = useState(!defaultCollapsed);
-  const [expandedToolIds, setExpandedToolIds] = useState<Set<string>>(new Set());
+  const groupId = `tool-group-${messageId}`;
+  const isExpanded = !isGroupCollapsed(groupId);
 
   const handleGroupToggle = useCallback(() => {
-    setIsGroupExpanded((prev) => !prev);
-  }, []);
+    onGroupToggle(groupId, !isExpanded);
+  }, [groupId, isExpanded, onGroupToggle]);
 
-  const handleToolToggle = useCallback((toolId: string) => {
-    setExpandedToolIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(toolId)) {
-        next.delete(toolId);
-      } else {
-        next.add(toolId);
-      }
-      return next;
-    });
-  }, []);
+  const handleToolToggle = useCallback(
+    (toolId: string) => {
+      const currentlyCollapsed = isToolCollapsed(toolId);
+      onToolToggle(toolId, currentlyCollapsed);
+    },
+    [isToolCollapsed, onToolToggle]
+  );
 
   // Generate tool summary for group header
   const toolSummary = useMemo(() => {
@@ -63,10 +64,15 @@ export function ToolMessageGroup({
     }
 
     const ToolWidget = getToolWidget(tool.name);
-    const isExpanded = expandedToolIds.has(tool.id);
+    // Default to collapsed (true) for progressive disclosure
+    const toolIsExpanded = !isToolCollapsed(tool.id);
 
     return (
-      <ToolWidget tool={tool} isExpanded={isExpanded} onToggle={() => handleToolToggle(tool.id)} />
+      <ToolWidget
+        tool={tool}
+        isExpanded={toolIsExpanded}
+        onToggle={() => handleToolToggle(tool.id)}
+      />
     );
   }
 
@@ -77,13 +83,13 @@ export function ToolMessageGroup({
       <button
         onClick={handleGroupToggle}
         className="w-full flex items-center gap-2 p-3 hover:bg-black/10 dark:hover:bg-white/10 transition-colors duration-200"
-        aria-expanded={isGroupExpanded}
-        aria-label={`${isGroupExpanded ? 'Collapse' : 'Expand'} group of ${tools.length} tools`}
+        aria-expanded={isExpanded}
+        aria-label={`${isExpanded ? 'Collapse' : 'Expand'} group of ${tools.length} tools`}
       >
         <ChevronRight
           className={cn(
             'h-4 w-4 text-muted-foreground transition-transform duration-200',
-            isGroupExpanded && 'rotate-90'
+            isExpanded && 'rotate-90'
           )}
         />
         <Package className="h-4 w-4 text-muted-foreground" />
@@ -92,17 +98,18 @@ export function ToolMessageGroup({
       </button>
 
       {/* Tool list (when group expanded) */}
-      {isGroupExpanded && (
+      {isExpanded && (
         <div className="px-3 pb-3 space-y-2">
           {tools.map((tool) => {
             const ToolWidget = getToolWidget(tool.name);
-            const isExpanded = expandedToolIds.has(tool.id);
+            // Default to collapsed (true) for progressive disclosure
+            const toolIsExpanded = !isToolCollapsed(tool.id);
 
             return (
               <ToolWidget
                 key={tool.id}
                 tool={tool}
-                isExpanded={isExpanded}
+                isExpanded={toolIsExpanded}
                 onToggle={() => handleToolToggle(tool.id)}
               />
             );

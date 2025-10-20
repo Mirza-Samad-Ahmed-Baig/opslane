@@ -56,26 +56,16 @@ export function GenericToolWidget({ tool, isExpanded, onToggle }: ToolWidgetProp
             </div>
           )}
 
-          {/* Result */}
-          {hasResult && tool.result && (
+          {/* Result - only show if there's an error (debugging aid) */}
+          {hasResult && tool.result && isError && (
             <div>
               <div className="text-xs font-medium text-muted-foreground mb-1">
-                Result {isError && <span className="text-destructive">(Error)</span>}:
+                <span className="text-destructive">Error:</span>
               </div>
-              <div
-                className={cn(
-                  'rounded p-2 font-mono text-xs max-h-96 overflow-y-auto',
-                  isError ? 'bg-destructive/10 text-destructive' : 'bg-muted/50'
-                )}
-              >
+              <div className="rounded p-2 font-mono text-xs max-h-96 overflow-y-auto bg-destructive/10 text-destructive">
                 <pre className="whitespace-pre-wrap">{tool.result.content}</pre>
               </div>
             </div>
-          )}
-
-          {/* Empty result state */}
-          {!hasResult && (
-            <div className="text-xs text-muted-foreground/60 italic">No result yet</div>
           )}
         </div>
       )}

@@ -2,12 +2,13 @@ import { useEffect, useRef, useMemo, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useChatMessages } from '@/hooks/useChatMessages';
 import { useMessageGrouping } from '@/hooks/useMessageGrouping';
+import { useCollapseState } from '@/hooks/useCollapseState';
 import { ChatMessage } from '@/components/chat/ChatMessage';
 import { ToolMessageGroup } from '@/components/chat/ToolMessageGroup';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { TypingIndicator } from '@/components/chat/TypingIndicator';
 import { SessionSetupProgress } from '@/components/SessionSetupProgress';
-import { Loader2, X, AlertCircle } from 'lucide-react';
+import { Loader2, X, AlertCircle, ChevronsDown, ChevronsUp } from 'lucide-react';
 import type { DisplayMessage } from '@/types/messages';
 
 interface MessagePanelProps {
@@ -43,6 +44,9 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
 
   // Phase 2: Group messages and tool calls
   const messageGroups = useMessageGrouping(displayMessages);
+
+  // Phase 3: Collapse state management
+  const collapseState = useCollapseState(sessionId);
 
   // Phase 1: Detect when we're waiting for Claude's initial response
   // This happens when:
@@ -183,6 +187,44 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
         </div>
       )}
 
+      {/* Expand/Collapse toolbar (Phase 3) */}
+      {displayMessages.length > 0 && messageGroups.some((g) => g.type === 'tool-group') && (
+        <div className="flex items-center justify-end gap-2 px-4 py-2 border-b bg-muted/20">
+          <button
+            onClick={() => {
+              // Collect all group and tool IDs
+              const groupIds: string[] = [];
+              const toolIds: string[] = [];
+
+              messageGroups.forEach((group) => {
+                if (group.type === 'tool-group') {
+                  const groupId = `tool-group-${group.messageId}`;
+                  groupIds.push(groupId);
+                  group.tools?.forEach((tool) => {
+                    toolIds.push(tool.id);
+                  });
+                }
+              });
+
+              collapseState.expandAll(groupIds, toolIds);
+            }}
+            className="flex items-center gap-1 px-2 py-1 text-xs rounded hover:bg-muted/50 transition-colors"
+            aria-label="Expand all tool groups"
+          >
+            <ChevronsDown className="h-3 w-3" />
+            <span>Expand All</span>
+          </button>
+          <button
+            onClick={collapseState.collapseAll}
+            className="flex items-center gap-1 px-2 py-1 text-xs rounded hover:bg-muted/50 transition-colors"
+            aria-label="Collapse all tool groups"
+          >
+            <ChevronsUp className="h-3 w-3" />
+            <span>Collapse All</span>
+          </button>
+        </div>
+      )}
+
       {/* Message list with virtual scrolling */}
       <div
         ref={parentRef}
@@ -231,7 +273,10 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
                       <ToolMessageGroup
                         tools={group.tools!}
                         messageId={group.messageId!}
-                        defaultCollapsed={false}
+                        isGroupCollapsed={collapseState.isGroupCollapsed}
+                        isToolCollapsed={collapseState.isToolCollapsed}
+                        onGroupToggle={collapseState.toggleGroup}
+                        onToolToggle={collapseState.toggleTool}
                       />
                     )}
                   </div>
@@ -276,7 +321,10 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
                     key={group.id}
                     tools={group.tools!}
                     messageId={group.messageId!}
-                    defaultCollapsed={false}
+                    isGroupCollapsed={collapseState.isGroupCollapsed}
+                    isToolCollapsed={collapseState.isToolCollapsed}
+                    onGroupToggle={collapseState.toggleGroup}
+                    onToolToggle={collapseState.toggleTool}
                   />
                 );
               }
