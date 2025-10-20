@@ -1,8 +1,7 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { useEffect, useMemo } from 'react';
-import { ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, Loader2, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Alert } from '@/components/ui/alert';
 import { useSession } from '@/hooks/useSession';
 import { SessionList } from '@/components/SessionList';
 import { MessagePanel } from '@/components/MessagePanel';
@@ -28,9 +27,51 @@ export function SessionDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data: session, isLoading, error } = useSession(id!);
+  const [showTroubleshooting, setShowTroubleshooting] = useState(false);
 
   // Determine if session is setting up based on actual status
   const isSettingUp = session && session.status !== 'ready' && session.status !== 'error';
+
+  // Get status-specific message with details
+  const getStatusMessage = (status: string): { message: string; detail: string } => {
+    switch (status) {
+      case 'created':
+        return {
+          message: 'Initializing session...',
+          detail: 'Setting up your isolated development environment',
+        };
+      case 'copying':
+        return {
+          message: 'Copying repository...',
+          detail: 'This may take a moment for large repos',
+        };
+      case 'creating':
+        return {
+          message: 'Creating isolated container...',
+          detail: 'Setting up Docker environment',
+        };
+      case 'starting':
+        return {
+          message: 'Starting container...',
+          detail: 'Launching isolated workspace',
+        };
+      case 'configuring':
+        return {
+          message: 'Configuring Claude credentials...',
+          detail: 'Setting up secure access',
+        };
+      case 'ready':
+        return {
+          message: 'Ready!',
+          detail: 'Your session is ready to use',
+        };
+      default:
+        return {
+          message: 'Setting up session...',
+          detail: 'This usually takes 2-5 seconds',
+        };
+    }
+  };
 
   // Phase 1: Create optimistic message from session.initial_message
   // This provides instant feedback while container is being set up in the background
@@ -70,12 +111,15 @@ export function SessionDetailPage() {
   if (isLoading) {
     return (
       <div className="h-screen flex items-center justify-center" role="status" aria-live="polite">
-        <div className="text-center space-y-2">
+        <div className="text-center space-y-3">
           <Loader2
             className="h-8 w-8 animate-spin mx-auto text-muted-foreground"
             aria-hidden="true"
           />
-          <p className="text-sm text-muted-foreground">Loading session...</p>
+          <div>
+            <p className="text-sm font-medium">Loading session...</p>
+            <p className="text-xs text-muted-foreground mt-1">Please wait</p>
+          </div>
         </div>
       </div>
     );
@@ -122,11 +166,94 @@ export function SessionDetailPage() {
         <SessionStatusBadge status={session.status} />
       </header>
 
+      {/* Setup progress banner */}
+      {isSettingUp && (
+        <div className="px-6 py-3 bg-muted/50 border-b">
+          <div className="flex items-center gap-3">
+            <Loader2 className="h-5 w-5 animate-spin text-primary" aria-hidden="true" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium">{getStatusMessage(session.status).message}</p>
+              <p className="text-xs text-muted-foreground">
+                {getStatusMessage(session.status).detail}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Error alert for failed sessions */}
-      {session.status === 'error' && session.error_message && (
-        <Alert variant="error" className="mx-6 mt-4 mb-0">
-          {session.error_message}
-        </Alert>
+      {session.status === 'error' && (
+        <div
+          className="px-6 py-4 bg-destructive/10 border-b border-destructive/30"
+          role="alert"
+          aria-live="assertive"
+        >
+          <div className="flex flex-col gap-3">
+            <div className="flex items-start gap-2">
+              <AlertCircle
+                className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5"
+                aria-hidden="true"
+              />
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base font-semibold text-destructive">Session Setup Failed</h3>
+                <p className="text-xs text-destructive/80 mt-1">
+                  {session.error_message || 'An unknown error occurred during setup'}
+                </p>
+              </div>
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex items-center gap-3 ml-7">
+              <Button
+                onClick={() => window.location.reload()}
+                variant="default"
+                size="sm"
+                className="text-xs"
+              >
+                Try Again
+              </Button>
+              <Button
+                onClick={() => setShowTroubleshooting(!showTroubleshooting)}
+                variant="ghost"
+                size="sm"
+                className="text-xs gap-1"
+              >
+                {showTroubleshooting ? (
+                  <>
+                    <ChevronUp className="h-3 w-3" />
+                    Hide troubleshooting tips
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown className="h-3 w-3" />
+                    Show troubleshooting tips
+                  </>
+                )}
+              </Button>
+            </div>
+
+            {/* Collapsible troubleshooting section */}
+            {showTroubleshooting && (
+              <div className="ml-7 p-3 bg-background/80 rounded-md text-xs space-y-2 border border-border">
+                <p className="font-semibold text-foreground">Common issues:</p>
+                <ul className="list-disc list-inside space-y-1 text-muted-foreground">
+                  <li>Docker not running: Start Docker Desktop and try again</li>
+                  <li>
+                    Claude CLI not installed:{' '}
+                    <code className="bg-muted px-1 py-0.5 rounded font-mono">
+                      npm install -g @anthropic-ai/cli
+                    </code>
+                  </li>
+                  <li>
+                    Credentials not configured:{' '}
+                    <code className="bg-muted px-1 py-0.5 rounded font-mono">claude auth</code>
+                  </li>
+                  <li>Port conflicts: Check if another session is using the same port</li>
+                </ul>
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {/* Three-column layout (Design Principle #5: Progressive Disclosure) */}
