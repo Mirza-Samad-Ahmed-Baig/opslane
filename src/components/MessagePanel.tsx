@@ -1,7 +1,9 @@
 import { useEffect, useRef, useMemo, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useChatMessages } from '@/hooks/useChatMessages';
+import { useMessageGrouping } from '@/hooks/useMessageGrouping';
 import { ChatMessage } from '@/components/chat/ChatMessage';
+import { ToolMessageGroup } from '@/components/chat/ToolMessageGroup';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { TypingIndicator } from '@/components/chat/TypingIndicator';
 import { SessionSetupProgress } from '@/components/SessionSetupProgress';
@@ -38,6 +40,9 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
 
     return realMessages;
   }, [optimisticMessage, messages]);
+
+  // Phase 2: Group messages and tool calls
+  const messageGroups = useMessageGrouping(displayMessages);
 
   // Phase 1: Detect when we're waiting for Claude's initial response
   // This happens when:
@@ -91,33 +96,41 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
 
   // Virtual scrolling (enabled for >50 messages per Performance Budget)
   const virtualizer = useVirtualizer({
-    count: displayMessages.length,
+    count: messageGroups.length,
     getScrollElement: () => parentRef.current,
     estimateSize: (index) => {
-      // Dynamic height estimation based on message content
-      const message = displayMessages[index];
-      if (!message) return 100;
+      const group = messageGroups[index];
+      if (!group) return 100;
 
-      let height = 80; // Base height (avatar + padding + timestamp)
+      if (group.type === 'message') {
+        // Message height estimation (existing logic)
+        const message = group.message!;
+        let height = 80; // Base height
 
-      // Add height for text content (rough estimate: ~20px per 80 chars)
-      if (message.text) {
-        const lines = Math.ceil(message.text.length / 80);
-        height += Math.min(lines * 20, 300); // Cap at 300px for very long messages
+        if (message.text) {
+          const lines = Math.ceil(message.text.length / 80);
+          height += Math.min(lines * 20, 300);
+        }
+
+        // Note: Tools are now in separate groups, not counted here
+
+        height += 16; // margin
+        return height;
+      } else {
+        // Tool group height estimation
+        const toolCount = group.tools!.length;
+
+        if (toolCount === 1) {
+          // Single tool: ~60px collapsed, ~200px expanded (average)
+          return 130;
+        } else {
+          // Multiple tools: group header (60px) + tools (60px each collapsed)
+          return 60 + toolCount * 60;
+        }
       }
-
-      // Add height for tool badges (~40px per tool)
-      if (message.tools?.length) {
-        height += message.tools.length * 40;
-      }
-
-      // Add margin
-      height += 16; // mb-4 margin
-
-      return height;
     },
     overscan: 5, // Render 5 extra items above/below viewport
-    enabled: displayMessages.length > 50, // Only virtualize for performance-critical lists
+    enabled: messageGroups.length > 50, // Only virtualize for performance-critical lists
   });
 
   // Track if user is at bottom (for Calm Technology: don't interrupt scrolling)
@@ -186,7 +199,7 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
             <p className="text-sm">No messages yet</p>
             <p className="text-xs">Start a conversation with Claude</p>
           </div>
-        ) : displayMessages.length > 50 ? (
+        ) : messageGroups.length > 50 ? (
           // Virtual scrolling for performance
           <div className="p-4">
             <div
@@ -197,12 +210,12 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
               }}
             >
               {virtualizer.getVirtualItems().map((virtualRow) => {
-                const message = displayMessages[virtualRow.index];
-                if (!message) return null;
+                const group = messageGroups[virtualRow.index];
+                if (!group) return null;
+
                 return (
                   <div
-                    // Use uuid (globally unique) instead of id (API response ID, can duplicate)
-                    key={message.uuid}
+                    key={group.id}
                     data-index={virtualRow.index}
                     style={{
                       position: 'absolute',
@@ -212,7 +225,15 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
                       transform: `translateY(${virtualRow.start}px)`,
                     }}
                   >
-                    <ChatMessage message={message} />
+                    {group.type === 'message' ? (
+                      <ChatMessage message={group.message!} />
+                    ) : (
+                      <ToolMessageGroup
+                        tools={group.tools!}
+                        messageId={group.messageId!}
+                        defaultCollapsed={false}
+                      />
+                    )}
                   </div>
                 );
               })}
@@ -245,10 +266,21 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
         ) : (
           // Regular rendering for <50 messages (simpler, no virtualization overhead)
           <div className="space-y-4 p-4">
-            {displayMessages.map((message) => (
-              // Use uuid (globally unique) instead of id (API response ID, can duplicate)
-              <ChatMessage key={message.uuid} message={message} />
-            ))}
+            {messageGroups.map((group) => {
+              if (group.type === 'message') {
+                return <ChatMessage key={group.id} message={group.message!} />;
+              } else {
+                // Tool group
+                return (
+                  <ToolMessageGroup
+                    key={group.id}
+                    tools={group.tools!}
+                    messageId={group.messageId!}
+                    defaultCollapsed={false}
+                  />
+                );
+              }
+            })}
 
             {/* Setup indicator */}
             {isSettingUp && (

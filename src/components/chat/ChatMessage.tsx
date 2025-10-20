@@ -1,5 +1,5 @@
 import type { DisplayMessage } from '@/types/messages';
-import { User, Bot, Wrench, CheckCircle, XCircle } from 'lucide-react';
+import { User, Bot } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -45,32 +45,13 @@ export function ChatMessage({ message }: ChatMessageProps) {
           </div>
         )}
 
-        {/* Tool badges (basic display, detailed widgets in Phase 3) */}
-        {message.tools && message.tools.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {message.tools.map((tool) => (
-              <div
-                key={tool.id}
-                className="flex items-center gap-1.5 rounded-md border bg-background px-2 py-1 text-xs"
-              >
-                <Wrench className="h-3 w-3" />
-                <span className="font-medium">{tool.name}</span>
-                {tool.result &&
-                  (tool.result.isError ? (
-                    <XCircle className="h-3 w-3 text-destructive" />
-                  ) : (
-                    <CheckCircle className="h-3 w-3 text-status-success-fg" />
-                  ))}
-              </div>
-            ))}
-          </div>
-        )}
+        {/* Tools are now rendered separately by MessagePanel via ToolMessageGroup */}
+        {/* This keeps text-only messages clean and allows proper grouping */}
 
         {/* Show "No content" only if truly empty */}
-        {(!message.text || message.text.trim().length === 0) &&
-          (!message.tools || message.tools.length === 0) && (
-            <div className="text-sm text-muted-foreground/60 italic">No displayable content</div>
-          )}
+        {(!message.text || message.text.trim().length === 0) && (
+          <div className="text-sm text-muted-foreground/60 italic">No displayable content</div>
+        )}
       </div>
     </div>
   );
