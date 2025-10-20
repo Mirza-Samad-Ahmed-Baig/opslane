@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Loader2, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useSession } from '@/hooks/useSession';
+import { useProject } from '@/hooks';
 import { SessionList } from '@/components/SessionList';
 import { MessagePanel } from '@/components/MessagePanel';
 import { DiffViewer } from '@/components/DiffViewer';
@@ -27,6 +28,7 @@ export function SessionDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data: session, isLoading, error } = useSession(id!);
+  const { data: project } = useProject(session?.project_id);
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
 
   // Determine if session is setting up based on actual status
@@ -159,7 +161,7 @@ export function SessionDetailPage() {
         <div className="flex-1 min-w-0">
           <h1 className="text-lg font-semibold">{session.name}</h1>
           <p className="text-xs text-muted-foreground truncate max-w-2xl">
-            {session.base_branch} • {session.local_repo_path}
+            {session.base_branch} {project && `• ${project.local_repo_path}`}
           </p>
         </div>
         <SessionStatusBadge status={session.status} />

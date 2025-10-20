@@ -8,8 +8,8 @@ export type SessionStatus = 'created' | 'cloning' | 'ready' | 'error';
  */
 export interface Session {
   id: string;
+  project_id: string; // NEW: FK to projects
   name: string;
-  local_repo_path: string;
   session_repo_path: string | null;
   base_branch: string;
   container_id: string | null;
@@ -36,17 +36,19 @@ export interface Session {
  * Maps to Rust NewSession struct
  */
 export interface NewSession {
+  project_id: string; // NEW: FK to projects
   name: string;
-  local_repo_path: string;
   base_branch: string;
   initial_message?: string; // Optional initial message to send to Claude
 }
 
 /**
  * Form state for new session dialog
- * Type alias for NewSession
+ * Keeps local_repo_path for form, which will be resolved to project_id
  */
-export type NewSessionFormData = NewSession;
+export type NewSessionFormData = Omit<NewSession, 'project_id'> & {
+  local_repo_path: string; // Keep for form, will resolve to project_id
+};
 
 /**
  * Validation errors for session form

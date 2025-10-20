@@ -1,3 +1,9 @@
-export { useSessions, useCreateSession, useDeleteSession } from './useSessions';
+export {
+  useSessions,
+  useCreateSession,
+  useDeleteSession,
+  useSessionsByProject,
+} from './useSessions';
 export { useDockerStatus } from './useDockerStatus';
 export { useSession } from './useSession';
+export { useProjects, useGetOrCreateProject, useProject, useDeleteProject } from './useProjects';

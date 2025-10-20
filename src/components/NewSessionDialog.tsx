@@ -13,8 +13,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert } from '@/components/ui/alert';
-import { useCreateSession, useDockerStatus } from '@/hooks';
-import type { NewSessionFormData, SessionFormErrors } from '@/types';
+import { useCreateSession, useDockerStatus, useGetOrCreateProject } from '@/hooks';
+import type { NewSessionFormData, SessionFormErrors, NewSession } from '@/types';
 import { validateSessionForm } from '@/lib/validation';
 import { logger } from '@/utils/logger';
 import { SessionCreationProgress } from '@/components/SessionCreationProgress';
@@ -51,6 +51,7 @@ export function NewSessionDialog({ open, onOpenChange: onOpenChangeProp }: NewSe
   const [isCreating, setIsCreating] = useState(false);
 
   const createSession = useCreateSession();
+  const getOrCreateProject = useGetOrCreateProject();
   const { data: dockerAvailable } = useDockerStatus();
 
   // Stabilize onOpenChange callback to prevent effect re-runs that cancel the auto-close timeout
@@ -170,8 +171,23 @@ export function NewSessionDialog({ open, onOpenChange: onOpenChangeProp }: NewSe
 
     // Submit
     try {
+      logger.debug('[NewSessionDialog] Getting or creating project');
+      // First, get or create the project
+      const project = await getOrCreateProject.mutateAsync(formData.local_repo_path);
+
       logger.debug('[NewSessionDialog] Submitting form to createSession');
-      await createSession.mutateAsync(formData);
+      // Create the new session with project_id
+      const newSession: NewSession = {
+        project_id: project.id,
+        name: formData.name,
+        base_branch: formData.base_branch,
+        initial_message: undefined,
+      };
+
+      await createSession.mutateAsync({
+        projectId: project.id,
+        newSession,
+      });
       logger.debug('[NewSessionDialog] createSession completed');
       // Reset form and close dialog on success
       setFormData(initialFormData);

@@ -16,7 +16,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { SessionStatusBadge } from './SessionStatusBadge';
-import { useDeleteSession } from '@/hooks';
+import { useDeleteSession, useProject } from '@/hooks';
 
 interface SessionCardProps {
   session: Session;
@@ -36,6 +36,7 @@ export function SessionCard({ session }: SessionCardProps) {
   const [showLogsDialog, setShowLogsDialog] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const deleteSession = useDeleteSession();
+  const { data: project } = useProject(session.project_id);
 
   const handleDelete = () => {
     deleteSession.mutate(session.id);
@@ -99,9 +100,11 @@ export function SessionCard({ session }: SessionCardProps) {
               <div>
                 <span className="font-medium">Branch:</span> {session.base_branch}
               </div>
-              <div className="truncate">
-                <span className="font-medium">Path:</span> {session.local_repo_path}
-              </div>
+              {project && (
+                <div className="truncate">
+                  <span className="font-medium">Path:</span> {project.local_repo_path}
+                </div>
+              )}
               {session.container_name && (
                 <div className="truncate">
                   <span className="font-medium">Container:</span> {session.container_name}

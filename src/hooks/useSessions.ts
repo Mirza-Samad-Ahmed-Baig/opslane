@@ -106,32 +106,61 @@ export function useSessions() {
 
 /**
  * Mutation hook for creating a new session
- * Invalidates sessions query on success to trigger refetch
+ * Now requires project_id in the NewSession payload
  */
 export function useCreateSession() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (newSession: NewSession) => {
-      logger.debug('Creating session', { name: newSession.name });
-      try {
-        const session = await invoke<Session>('create_session', { newSession });
-        logger.info('Session created successfully', { id: session.id, name: session.name });
-        return session;
-      } catch (error) {
-        logger.error('Failed to create session', error as Error);
-        throw error;
+    mutationFn: async (params: { projectId: string; newSession: NewSession }) => {
+      logger.debug('[useCreateSession] Creating session', params);
+
+      // Validate project_id matches
+      if (params.newSession.project_id !== params.projectId) {
+        throw new Error('Project ID mismatch');
       }
+
+      const session = await invoke<Session>('create_session', {
+        projectId: params.projectId,
+        newSession: params.newSession,
+      });
+
+      logger.debug('[useCreateSession] Session created', { session });
+      return session;
     },
     onSuccess: (session) => {
-      // Invalidate and refetch sessions to show new session
+      // Invalidate sessions list to refresh UI
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      queryClient.invalidateQueries({ queryKey: ['sessions', session.project_id] });
+
+      // Add to cache optimistically
+      queryClient.setQueryData(['session', session.id], session);
+
       toast.success(`Session "${session.name}" created successfully`);
     },
     onError: (error: Error) => {
+      logger.error('[useCreateSession] Failed to create session', error);
       const message = formatErrorMessage(error);
       toast.error(`Failed to create session: ${message}`);
     },
+  });
+}
+
+/**
+ * Get sessions for a specific project
+ */
+export function useSessionsByProject(projectId: string | undefined) {
+  return useQuery({
+    queryKey: ['sessions', projectId],
+    queryFn: async () => {
+      if (!projectId) {
+        throw new Error('Project ID is required');
+      }
+      logger.debug('[useSessionsByProject] Fetching sessions', { projectId });
+      const sessions = await invoke<Session[]>('list_sessions_by_project', { projectId });
+      return sessions;
+    },
+    enabled: !!projectId,
   });
 }
 

@@ -1,46 +1,89 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
-import type { Project, NewProject } from '@/types';
+import type { Project } from '@/types/project';
+import { logger } from '@/utils/logger';
 
 /**
- * Hook to fetch projects for a session
+ * Fetch all projects ordered by recently opened
  */
-export function useSessionProjects(sessionId: string) {
+export function useProjects() {
   return useQuery({
-    queryKey: ['projects', sessionId],
-    queryFn: () => invoke<Project[]>('get_session_projects', { sessionId }),
-    enabled: !!sessionId,
+    queryKey: ['projects'],
+    queryFn: async () => {
+      logger.debug('[useProjects] Fetching projects');
+      const projects = await invoke<Project[]>('list_projects');
+      logger.debug('[useProjects] Fetched projects', { count: projects.length });
+      return projects;
+    },
+    staleTime: 1000 * 60 * 5, // Cache for 5 minutes
   });
 }
 
 /**
- * Hook to create a new project
+ * Get or create a project by repository path
+ * If project exists, returns it. If not, creates new project.
  */
-export function useCreateProject() {
+export function useGetOrCreateProject() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (newProject: NewProject) => invoke<Project>('create_project', { newProject }),
+    mutationFn: async (localRepoPath: string) => {
+      logger.debug('[useGetOrCreateProject] Getting or creating project', { localRepoPath });
+      const project = await invoke<Project>('get_or_create_project', {
+        localRepoPath,
+      });
+      logger.debug('[useGetOrCreateProject] Project resolved', { project });
+      return project;
+    },
     onSuccess: (project) => {
-      // Invalidate the projects list for this session
-      queryClient.invalidateQueries({ queryKey: ['projects', project.session_id] });
+      // Update projects cache
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+
+      // Optimistically add to cache if it doesn't exist
+      queryClient.setQueryData(['project', project.id], project);
+    },
+    onError: (error) => {
+      logger.error('[useGetOrCreateProject] Failed to get or create project', error as Error);
     },
   });
 }
 
 /**
- * Hook to delete a project
+ * Get a single project by ID
+ */
+export function useProject(projectId: string | undefined) {
+  return useQuery({
+    queryKey: ['project', projectId],
+    queryFn: async () => {
+      if (!projectId) {
+        throw new Error('Project ID is required');
+      }
+      logger.debug('[useProject] Fetching project', { projectId });
+      const project = await invoke<Project>('get_project', { projectId });
+      return project;
+    },
+    enabled: !!projectId,
+  });
+}
+
+/**
+ * Delete a project (soft delete, cascades to sessions)
  */
 export function useDeleteProject() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (projectId: string) => invoke<void>('delete_project', { projectId }),
-    onSuccess: (_, projectId) => {
-      // Invalidate all project queries (we don't know which session this project belonged to)
+    mutationFn: async (projectId: string) => {
+      logger.debug('[useDeleteProject] Deleting project', { projectId });
+      await invoke('delete_project', { projectId });
+    },
+    onSuccess: () => {
+      // Invalidate all project and session queries
       queryClient.invalidateQueries({ queryKey: ['projects'] });
-      // Also invalidate tasks for this project
-      queryClient.invalidateQueries({ queryKey: ['tasks', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
+    },
+    onError: (error) => {
+      logger.error('[useDeleteProject] Failed to delete project', error as Error);
     },
   });
 }
