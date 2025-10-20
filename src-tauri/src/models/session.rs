@@ -11,9 +11,6 @@ pub enum ValidationError {
     #[error("Session name cannot exceed 100 characters")]
     NameTooLong,
 
-    #[error("Repository path cannot be empty")]
-    EmptyRepoPath,
-
     #[error("Base branch cannot be empty")]
     EmptyBaseBranch,
 }
@@ -22,8 +19,8 @@ pub enum ValidationError {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Session {
     pub id: String,
+    pub project_id: String, // Foreign key to projects
     pub name: String,
-    pub local_repo_path: String,           // Original repo (user's repo)
     pub session_repo_path: Option<String>, // Copy location for this session
     pub base_branch: String,
     pub container_id: Option<String>,
@@ -56,8 +53,8 @@ impl Session {
 /// NewSession - input for creating a session
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewSession {
+    pub project_id: String, // Foreign key to projects
     pub name: String,
-    pub local_repo_path: String,
     pub base_branch: String,
     pub initial_message: Option<String>, // Optional initial message to send to Claude
 }
@@ -72,10 +69,6 @@ impl NewSession {
 
         if self.name.len() > 100 {
             return Err(ValidationError::NameTooLong);
-        }
-
-        if self.local_repo_path.trim().is_empty() {
-            return Err(ValidationError::EmptyRepoPath);
         }
 
         if self.base_branch.trim().is_empty() {
@@ -93,8 +86,8 @@ mod tests {
     #[test]
     fn test_new_session_validation() {
         let new_session = NewSession {
+            project_id: "test-project-id".to_string(),
             name: "Test Session".to_string(),
-            local_repo_path: "/tmp/test".to_string(),
             base_branch: "main".to_string(),
             initial_message: None,
         };
@@ -105,8 +98,8 @@ mod tests {
     #[test]
     fn test_new_session_empty_name_fails() {
         let new_session = NewSession {
+            project_id: "test-project-id".to_string(),
             name: "".to_string(),
-            local_repo_path: "/tmp/test".to_string(),
             base_branch: "main".to_string(),
             initial_message: None,
         };
@@ -117,8 +110,8 @@ mod tests {
     #[test]
     fn test_new_session_long_name_fails() {
         let new_session = NewSession {
+            project_id: "test-project-id".to_string(),
             name: "a".repeat(101),
-            local_repo_path: "/tmp/test".to_string(),
             base_branch: "main".to_string(),
             initial_message: None,
         };

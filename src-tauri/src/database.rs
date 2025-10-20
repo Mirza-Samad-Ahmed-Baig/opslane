@@ -96,43 +96,40 @@ impl Database {
         let session = sqlx::query_as::<_, crate::models::Session>(
             r#"
             INSERT INTO sessions (
-                id, name, local_repo_path, base_branch, initial_message, status, is_deleted
+                id, project_id, name, base_branch, initial_message, status, is_deleted
             ) VALUES (?, ?, ?, ?, ?, 'created', 0)
-            RETURNING
-                id, name, local_repo_path, session_repo_path, base_branch,
-                container_id, container_name, container_branch,
-                status, error_message,
-                volume_name, claude_session_id, last_activity_at,
-                initial_message,
-                created_at, updated_at, is_deleted
+            RETURNING id, project_id, name, session_repo_path, base_branch,
+                      container_id, container_name, container_branch,
+                      status, error_message, volume_name, claude_session_id,
+                      last_activity_at, initial_message,
+                      created_at, updated_at, is_deleted
             "#,
         )
         .bind(&id)
+        .bind(&new.project_id)
         .bind(&new.name)
-        .bind(&new.local_repo_path)
         .bind(&new.base_branch)
         .bind(&new.initial_message)
         .fetch_one(&self.pool)
         .await?;
 
+        log::info!("Created session: {} ({})", session.name, session.id);
+
         Ok(session)
     }
 
-    /// List all non-deleted sessions
-    #[allow(dead_code)]
+    /// List all sessions (joined with project info)
     pub async fn list_sessions(&self) -> Result<Vec<crate::models::Session>> {
         let sessions = sqlx::query_as::<_, crate::models::Session>(
             r#"
-            SELECT
-                id, name, local_repo_path, session_repo_path, base_branch,
-                container_id, container_name, container_branch,
-                status, error_message,
-                volume_name, claude_session_id, last_activity_at,
-                initial_message,
-                created_at, updated_at, is_deleted
-            FROM sessions
-            WHERE is_deleted = 0
-            ORDER BY created_at DESC
+            SELECT s.id, s.project_id, s.name, s.session_repo_path, s.base_branch,
+                   s.container_id, s.container_name, s.container_branch,
+                   s.status, s.error_message, s.volume_name, s.claude_session_id,
+                   s.last_activity_at, s.initial_message,
+                   s.created_at, s.updated_at, s.is_deleted
+            FROM sessions s
+            WHERE s.is_deleted = 0
+            ORDER BY s.created_at DESC
             "#,
         )
         .fetch_all(&self.pool)
@@ -146,15 +143,13 @@ impl Database {
     pub async fn get_session(&self, id: &str) -> Result<crate::models::Session> {
         let session = sqlx::query_as::<_, crate::models::Session>(
             r#"
-            SELECT
-                id, name, local_repo_path, session_repo_path, base_branch,
-                container_id, container_name, container_branch,
-                status, error_message,
-                volume_name, claude_session_id, last_activity_at,
-                initial_message,
-                created_at, updated_at, is_deleted
+            SELECT id, project_id, name, session_repo_path, base_branch,
+                   container_id, container_name, container_branch,
+                   status, error_message, volume_name, claude_session_id,
+                   last_activity_at, initial_message,
+                   created_at, updated_at, is_deleted
             FROM sessions
-            WHERE id = ?
+            WHERE id = ? AND is_deleted = 0
             "#,
         )
         .bind(id)
@@ -180,6 +175,24 @@ impl Database {
             "#,
         )
         .bind(status)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Update session status and error message
+    #[allow(dead_code)]
+    pub async fn update_session_error(&self, id: &str, error_message: &str) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE sessions
+            SET status = 'error', error_message = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(error_message)
         .bind(id)
         .execute(&self.pool)
         .await?;
@@ -308,66 +321,89 @@ impl Database {
         Ok(())
     }
 
-    // ===== Project Methods =====
+    // ============================================================================
+    // Projects
+    // ============================================================================
 
-    /// Create a new project
-    #[allow(dead_code)]
-    pub async fn create_project(
+    /// Get or create a project by repository path
+    /// If project exists, updates last_opened_at. If not, creates new project.
+    pub async fn get_or_create_project(
         &self,
-        new: crate::models::NewProject,
+        local_repo_path: &str,
     ) -> Result<crate::models::Project> {
         use uuid::Uuid;
 
-        // Validate input
-        new.validate()
-            .map_err(|e| anyhow::anyhow!("Validation error: {e}"))?;
+        // Extract folder name from path
+        let name = crate::models::NewProject::extract_folder_name(local_repo_path);
 
-        let id = Uuid::new_v4().to_string();
-
-        // Get next order_index
-        let max_order: Option<i32> = sqlx::query_scalar(
-            "SELECT COALESCE(MAX(order_index), -1) FROM projects WHERE session_id = ? AND is_deleted = 0"
+        // Try to find existing project
+        let existing = sqlx::query_as::<_, crate::models::Project>(
+            r#"
+            SELECT id, name, local_repo_path, last_opened_at, created_at, updated_at, is_deleted
+            FROM projects
+            WHERE local_repo_path = ? AND is_deleted = 0
+            "#,
         )
-        .bind(&new.session_id)
-        .fetch_one(&self.pool)
+        .bind(local_repo_path)
+        .fetch_optional(&self.pool)
         .await?;
 
-        let order_index = max_order.unwrap_or(-1) + 1;
+        if let Some(mut project) = existing {
+            // Update last_opened_at
+            sqlx::query(
+                r#"
+                UPDATE projects
+                SET last_opened_at = datetime('now')
+                WHERE id = ?
+                "#,
+            )
+            .bind(&project.id)
+            .execute(&self.pool)
+            .await?;
+
+            // Update the returned struct
+            project.last_opened_at = Some(chrono::Utc::now().to_rfc3339());
+
+            log::info!(
+                "Reusing existing project: {} ({})",
+                project.name,
+                project.id
+            );
+            return Ok(project);
+        }
+
+        // Create new project
+        let id = Uuid::new_v4().to_string();
 
         let project = sqlx::query_as::<_, crate::models::Project>(
             r#"
-            INSERT INTO projects (
-                id, session_id, name, description, order_index, is_deleted
-            ) VALUES (?, ?, ?, ?, ?, 0)
-            RETURNING id, session_id, name, description, order_index, created_at, updated_at, is_deleted
+            INSERT INTO projects (id, name, local_repo_path, last_opened_at, is_deleted)
+            VALUES (?, ?, ?, datetime('now'), 0)
+            RETURNING id, name, local_repo_path, last_opened_at, created_at, updated_at, is_deleted
             "#,
         )
         .bind(&id)
-        .bind(&new.session_id)
-        .bind(&new.name)
-        .bind(&new.description)
-        .bind(order_index)
+        .bind(&name)
+        .bind(local_repo_path)
         .fetch_one(&self.pool)
         .await?;
+
+        log::info!("Created new project: {} ({})", project.name, project.id);
 
         Ok(project)
     }
 
-    /// Get all projects for a session
-    #[allow(dead_code)]
-    pub async fn get_session_projects(
-        &self,
-        session_id: &str,
-    ) -> Result<Vec<crate::models::Project>> {
+    /// List all projects ordered by recently opened
+    pub async fn list_projects(&self) -> Result<Vec<crate::models::Project>> {
         let projects = sqlx::query_as::<_, crate::models::Project>(
             r#"
-            SELECT id, session_id, name, description, order_index, created_at, updated_at, is_deleted
+            SELECT id, name, local_repo_path, last_opened_at, created_at, updated_at, is_deleted
             FROM projects
-            WHERE session_id = ? AND is_deleted = 0
-            ORDER BY order_index ASC
+            WHERE is_deleted = 0
+            ORDER BY last_opened_at DESC NULLS LAST, created_at DESC
+            LIMIT 50
             "#,
         )
-        .bind(session_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -375,13 +411,12 @@ impl Database {
     }
 
     /// Get a single project by ID
-    #[allow(dead_code)]
     pub async fn get_project(&self, id: &str) -> Result<crate::models::Project> {
         let project = sqlx::query_as::<_, crate::models::Project>(
             r#"
-            SELECT id, session_id, name, description, order_index, created_at, updated_at, is_deleted
+            SELECT id, name, local_repo_path, last_opened_at, created_at, updated_at, is_deleted
             FROM projects
-            WHERE id = ?
+            WHERE id = ? AND is_deleted = 0
             "#,
         )
         .bind(id)
@@ -391,8 +426,7 @@ impl Database {
         Ok(project)
     }
 
-    /// Delete project (soft delete)
-    #[allow(dead_code)]
+    /// Delete a project (soft delete, cascades to sessions via DB trigger)
     pub async fn delete_project(&self, id: &str) -> Result<()> {
         sqlx::query(
             r#"
@@ -405,133 +439,33 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
+        log::info!("Deleted project: {id}");
+
         Ok(())
     }
 
-    // ===== Task Methods =====
-
-    /// Create a new task
-    #[allow(dead_code)]
-    pub async fn create_task(&self, new: crate::models::NewTask) -> Result<crate::models::Task> {
-        use uuid::Uuid;
-
-        // Validate input
-        new.validate()
-            .map_err(|e| anyhow::anyhow!("Validation error: {e}"))?;
-
-        let id = Uuid::new_v4().to_string();
-
-        // Get next order_index
-        let max_order: Option<i32> = sqlx::query_scalar(
-            "SELECT COALESCE(MAX(order_index), -1) FROM tasks WHERE project_id = ? AND is_deleted = 0"
-        )
-        .bind(&new.project_id)
-        .fetch_one(&self.pool)
-        .await?;
-
-        let order_index = max_order.unwrap_or(-1) + 1;
-
-        let task = sqlx::query_as::<_, crate::models::Task>(
+    /// List sessions for a specific project
+    pub async fn list_sessions_by_project(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<crate::models::Session>> {
+        let sessions = sqlx::query_as::<_, crate::models::Session>(
             r#"
-            INSERT INTO tasks (
-                id, project_id, name, status, order_index, is_deleted
-            ) VALUES (?, ?, ?, 'pending', ?, 0)
-            RETURNING id, project_id, name, status, order_index, created_at, updated_at, completed_at, is_deleted
-            "#,
-        )
-        .bind(&id)
-        .bind(&new.project_id)
-        .bind(&new.name)
-        .bind(order_index)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(task)
-    }
-
-    /// Get all tasks for a project
-    #[allow(dead_code)]
-    pub async fn get_project_tasks(&self, project_id: &str) -> Result<Vec<crate::models::Task>> {
-        let tasks = sqlx::query_as::<_, crate::models::Task>(
-            r#"
-            SELECT id, project_id, name, status, order_index, created_at, updated_at, completed_at, is_deleted
-            FROM tasks
+            SELECT id, project_id, name, session_repo_path, base_branch,
+                   container_id, container_name, container_branch,
+                   status, error_message, volume_name, claude_session_id,
+                   last_activity_at, initial_message,
+                   created_at, updated_at, is_deleted
+            FROM sessions
             WHERE project_id = ? AND is_deleted = 0
-            ORDER BY order_index ASC
+            ORDER BY created_at DESC
             "#,
         )
         .bind(project_id)
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(tasks)
-    }
-
-    /// Get a single task by ID
-    #[allow(dead_code)]
-    pub async fn get_task(&self, id: &str) -> Result<crate::models::Task> {
-        let task = sqlx::query_as::<_, crate::models::Task>(
-            r#"
-            SELECT id, project_id, name, status, order_index, created_at, updated_at, completed_at, is_deleted
-            FROM tasks
-            WHERE id = ?
-            "#,
-        )
-        .bind(id)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(task)
-    }
-
-    /// Update task status
-    #[allow(dead_code)]
-    pub async fn update_task_status(&self, id: &str, status: &str) -> Result<crate::models::Task> {
-        // Validate status
-        if !crate::models::Task::is_valid_status(status) {
-            return Err(anyhow::anyhow!("Invalid status: {status}"));
-        }
-
-        // Use CASE expression to safely set completed_at based on status
-        // This avoids string concatenation and SQL injection risks
-        let task = sqlx::query_as::<_, crate::models::Task>(
-            r#"
-            UPDATE tasks
-            SET
-                status = ?,
-                completed_at = CASE
-                    WHEN ? = 'completed' THEN datetime('now')
-                    ELSE NULL
-                END,
-                updated_at = datetime('now')
-            WHERE id = ?
-            RETURNING id, project_id, name, status, order_index, created_at, updated_at, completed_at, is_deleted
-            "#,
-        )
-        .bind(status)
-        .bind(status)
-        .bind(id)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(task)
-    }
-
-    /// Delete task (soft delete)
-    #[allow(dead_code)]
-    pub async fn delete_task(&self, id: &str) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE tasks
-            SET is_deleted = 1
-            WHERE id = ?
-            "#,
-        )
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+        Ok(sessions)
     }
 }
 
@@ -548,6 +482,13 @@ mod tests {
             .expect("Failed to initialize test database")
     }
 
+    /// Helper to create a test project
+    async fn create_test_project(db: &Database, path: &str) -> crate::models::Project {
+        db.get_or_create_project(path)
+            .await
+            .expect("Failed to create test project")
+    }
+
     #[tokio::test]
     async fn test_database_init() {
         let db = setup_test_db().await;
@@ -559,15 +500,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.0, 1);
-
-        // Verify migration ran successfully
-        let message: String =
-            sqlx::query_scalar("SELECT message FROM _migration_test WHERE id = 1")
-                .fetch_one(db.pool())
-                .await
-                .unwrap();
-
-        assert_eq!(message, "Migrations working!");
 
         db.close().await;
     }
@@ -605,22 +537,22 @@ mod tests {
 
         let expected_columns = vec![
             "id",
+            "project_id",
             "name",
-            "local_repo_path",
+            "session_repo_path",
             "base_branch",
             "container_id",
             "container_name",
             "container_branch",
             "status",
             "error_message",
-            "created_at",
-            "updated_at",
-            "is_deleted",
             "volume_name",
             "claude_session_id",
             "last_activity_at",
-            "session_repo_path",
             "initial_message",
+            "created_at",
+            "updated_at",
+            "is_deleted",
         ];
 
         assert_eq!(
@@ -637,9 +569,12 @@ mod tests {
 
         use crate::models::NewSession;
 
+        // First create a project
+        let project = create_test_project(&db, "/tmp/test-repo").await;
+
         let new_session = NewSession {
+            project_id: project.id.clone(),
             name: "Test Session".to_string(),
-            local_repo_path: "/tmp/test-repo".to_string(),
             base_branch: "main".to_string(),
             initial_message: None,
         };
@@ -647,7 +582,7 @@ mod tests {
         let session = db.create_session(new_session).await.unwrap();
 
         assert_eq!(session.name, "Test Session");
-        assert_eq!(session.local_repo_path, "/tmp/test-repo");
+        assert_eq!(session.project_id, project.id);
         assert_eq!(session.base_branch, "main");
         assert_eq!(session.status, "created");
         assert!(!session.is_deleted);
@@ -666,11 +601,17 @@ mod tests {
 
         use crate::models::NewSession;
 
+        // Create projects
+        let project1 = create_test_project(&db, "/tmp/repo-1").await;
+        let project2 = create_test_project(&db, "/tmp/repo-2").await;
+        let project3 = create_test_project(&db, "/tmp/repo-3").await;
+
         // Create multiple sessions
-        for i in 1..=3 {
+        let projects = vec![project1, project2, project3];
+        for (i, project) in projects.iter().enumerate() {
             let new_session = NewSession {
-                name: format!("Session {i}"),
-                local_repo_path: format!("/tmp/repo-{i}"),
+                project_id: project.id.clone(),
+                name: format!("Session {}", i + 1),
                 base_branch: "main".to_string(),
                 initial_message: None,
             };
@@ -689,9 +630,11 @@ mod tests {
 
         use crate::models::NewSession;
 
+        let project = create_test_project(&db, "/tmp/findme").await;
+
         let new_session = NewSession {
+            project_id: project.id,
             name: "Find Me".to_string(),
-            local_repo_path: "/tmp/findme".to_string(),
             base_branch: "main".to_string(),
             initial_message: None,
         };
@@ -724,9 +667,11 @@ mod tests {
 
         use crate::models::NewSession;
 
+        let project = create_test_project(&db, "/tmp/status").await;
+
         let new_session = NewSession {
+            project_id: project.id,
             name: "Status Test".to_string(),
-            local_repo_path: "/tmp/status".to_string(),
             base_branch: "main".to_string(),
             initial_message: None,
         };
@@ -750,9 +695,11 @@ mod tests {
 
         use crate::models::NewSession;
 
+        let project = create_test_project(&db, "/tmp/container").await;
+
         let new_session = NewSession {
+            project_id: project.id,
             name: "Container Test".to_string(),
-            local_repo_path: "/tmp/container".to_string(),
             base_branch: "main".to_string(),
             initial_message: None,
         };
@@ -789,20 +736,23 @@ mod tests {
 
         use crate::models::NewSession;
 
+        let project = create_test_project(&db, "/tmp/delete").await;
+
         let new_session = NewSession {
+            project_id: project.id,
             name: "Delete Me".to_string(),
-            local_repo_path: "/tmp/delete".to_string(),
             base_branch: "main".to_string(),
             initial_message: None,
         };
 
         let session = db.create_session(new_session).await.unwrap();
+        let session_id = session.id.clone();
 
-        db.delete_session(&session.id).await.unwrap();
+        db.delete_session(&session_id).await.unwrap();
 
-        // Session should still exist in DB but marked deleted
-        let deleted = db.get_session(&session.id).await.unwrap();
-        assert!(deleted.is_deleted);
+        // Session should not be retrievable via get_session (soft delete filters it out)
+        let result = db.get_session(&session_id).await;
+        assert!(result.is_err(), "Deleted session should not be retrievable");
 
         // Should not appear in list
         let sessions = db.list_sessions().await.unwrap();
@@ -821,12 +771,13 @@ mod tests {
 
         use crate::models::NewSession;
 
-        // Create 3 sessions
+        // Create projects and sessions
         let mut session_ids = vec![];
         for i in 1..=3 {
+            let project = create_test_project(&db, &format!("/tmp/repo-{i}")).await;
             let new_session = NewSession {
+                project_id: project.id,
                 name: format!("Session {i}"),
-                local_repo_path: format!("/tmp/repo-{i}"),
                 base_branch: "main".to_string(),
                 initial_message: None,
             };
@@ -852,9 +803,11 @@ mod tests {
 
         use crate::models::NewSession;
 
+        let project = create_test_project(&db, "/tmp/volume-test").await;
+
         let new_session = NewSession {
+            project_id: project.id,
             name: "Volume Test".to_string(),
-            local_repo_path: "/tmp/volume-test".to_string(),
             base_branch: "main".to_string(),
             initial_message: None,
         };
@@ -882,9 +835,11 @@ mod tests {
 
         use crate::models::NewSession;
 
+        let project = create_test_project(&db, "/tmp/claude-test").await;
+
         let new_session = NewSession {
+            project_id: project.id,
             name: "Claude ID Test".to_string(),
-            local_repo_path: "/tmp/claude-test".to_string(),
             base_branch: "main".to_string(),
             initial_message: None,
         };
@@ -912,9 +867,11 @@ mod tests {
 
         use crate::models::NewSession;
 
+        let project = create_test_project(&db, "/tmp/full-test").await;
+
         let new_session = NewSession {
+            project_id: project.id,
             name: "Full Persistence Test".to_string(),
-            local_repo_path: "/tmp/full-test".to_string(),
             base_branch: "main".to_string(),
             initial_message: None,
         };
@@ -929,10 +886,13 @@ mod tests {
             .await
             .unwrap();
 
-        // Update status to 'ready' to trigger last_activity_at update
+        // Update status to 'ready'
         db.update_session_status(&session.id, "ready")
             .await
             .unwrap();
+
+        // Update activity timestamp separately
+        db.update_session_activity(&session.id).await.unwrap();
 
         // Verify all fields present
         let updated = db.get_session(&session.id).await.unwrap();
@@ -943,7 +903,7 @@ mod tests {
         assert_eq!(updated.claude_session_id, Some("claude-xyz789".to_string()));
         assert!(
             updated.last_activity_at.is_some(),
-            "last_activity_at should be set after status change to 'ready'"
+            "last_activity_at should be set after update_session_activity"
         );
 
         db.close().await;

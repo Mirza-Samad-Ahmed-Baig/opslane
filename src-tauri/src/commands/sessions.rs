@@ -10,11 +10,21 @@ use tauri::{AppHandle, Emitter, State};
 /// provides instant feedback to the user.
 #[tauri::command]
 pub async fn create_session(
+    project_id: String,
     new_session: NewSession,
     state: State<'_, AppState>,
     app_handle: AppHandle,
 ) -> Result<Session, String> {
-    log::info!("Creating session: {}", new_session.name);
+    log::info!(
+        "Creating session: {} for project: {}",
+        new_session.name,
+        project_id
+    );
+
+    // Validate project_id matches new_session.project_id
+    if new_session.project_id != project_id {
+        return Err("Project ID mismatch".to_string());
+    }
 
     // Store initial_message for background task
     let initial_message = new_session.initial_message.clone();
@@ -58,9 +68,9 @@ pub async fn create_session(
         {
             log::error!("Container setup failed for session {session_id}: {e}");
 
-            // BLOCKER FIX: Update database to reflect error state
-            if let Err(db_err) = db.update_session_status(&session_id, "error").await {
-                log::error!("Failed to update session status to error: {db_err}");
+            // Update database to reflect error state with error message
+            if let Err(db_err) = db.update_session_error(&session_id, &e.to_string()).await {
+                log::error!("Failed to update session error: {db_err}");
             }
 
             // Emit session-status-changed event for frontend hooks
@@ -172,6 +182,19 @@ pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<Session>, S
         log::error!("Failed to list sessions: {e}");
         format!("Failed to list sessions: {e}")
     })
+}
+
+/// List all sessions for a specific project
+#[tauri::command]
+pub async fn list_sessions_by_project(
+    project_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<Session>, String> {
+    state
+        .db
+        .list_sessions_by_project(&project_id)
+        .await
+        .map_err(|e| format!("Failed to list sessions: {e}"))
 }
 
 /// Delete a session and cleanup its container

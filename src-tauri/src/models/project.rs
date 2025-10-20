@@ -11,18 +11,17 @@ pub enum ProjectValidationError {
     #[error("Project name cannot exceed 100 characters")]
     NameTooLong,
 
-    #[error("Session ID cannot be empty")]
-    EmptySessionId,
+    #[error("Repository path cannot be empty")]
+    EmptyRepoPath,
 }
 
-/// Project model - represents a project within a session
+/// Project model - represents a source code repository location
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Project {
     pub id: String,
-    pub session_id: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub order_index: i32,
+    pub name: String,                   // Folder name (e.g., "opslane")
+    pub local_repo_path: String,        // Full path (e.g., "/Users/me/opslane")
+    pub last_opened_at: Option<String>, // ISO 8601 timestamp
     pub created_at: String,
     pub updated_at: String,
     pub is_deleted: bool,
@@ -31,14 +30,12 @@ pub struct Project {
 /// NewProject - input for creating a project
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewProject {
-    pub session_id: String,
     pub name: String,
-    pub description: Option<String>,
+    pub local_repo_path: String,
 }
 
 impl NewProject {
     /// Validate new project input
-    #[allow(dead_code)]
     pub fn validate(&self) -> Result<(), ProjectValidationError> {
         if self.name.trim().is_empty() {
             return Err(ProjectValidationError::EmptyName);
@@ -48,11 +45,20 @@ impl NewProject {
             return Err(ProjectValidationError::NameTooLong);
         }
 
-        if self.session_id.trim().is_empty() {
-            return Err(ProjectValidationError::EmptySessionId);
+        if self.local_repo_path.trim().is_empty() {
+            return Err(ProjectValidationError::EmptyRepoPath);
         }
 
         Ok(())
+    }
+
+    /// Extract folder name from path
+    pub fn extract_folder_name(path: &str) -> String {
+        std::path::Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string()
     }
 }
 
@@ -61,11 +67,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_extract_folder_name() {
+        assert_eq!(
+            NewProject::extract_folder_name("/Users/me/opslane"),
+            "opslane"
+        );
+        assert_eq!(
+            NewProject::extract_folder_name("/home/user/my-project"),
+            "my-project"
+        );
+        // Windows path - only test on Windows
+        #[cfg(target_os = "windows")]
+        assert_eq!(
+            NewProject::extract_folder_name("C:\\Users\\me\\my-app"),
+            "my-app"
+        );
+    }
+
+    #[test]
     fn test_new_project_validation() {
         let new_project = NewProject {
-            session_id: "test-session-id".to_string(),
             name: "Test Project".to_string(),
-            description: Some("A test project".to_string()),
+            local_repo_path: "/tmp/test".to_string(),
         };
 
         assert!(new_project.validate().is_ok());
@@ -74,9 +97,8 @@ mod tests {
     #[test]
     fn test_new_project_empty_name_fails() {
         let new_project = NewProject {
-            session_id: "test-session-id".to_string(),
             name: "".to_string(),
-            description: None,
+            local_repo_path: "/tmp/test".to_string(),
         };
 
         assert!(new_project.validate().is_err());
@@ -85,20 +107,18 @@ mod tests {
     #[test]
     fn test_new_project_long_name_fails() {
         let new_project = NewProject {
-            session_id: "test-session-id".to_string(),
             name: "a".repeat(101),
-            description: None,
+            local_repo_path: "/tmp/test".to_string(),
         };
 
         assert!(new_project.validate().is_err());
     }
 
     #[test]
-    fn test_new_project_empty_session_id_fails() {
+    fn test_new_project_empty_repo_path_fails() {
         let new_project = NewProject {
-            session_id: "".to_string(),
             name: "Test Project".to_string(),
-            description: None,
+            local_repo_path: "".to_string(),
         };
 
         assert!(new_project.validate().is_err());

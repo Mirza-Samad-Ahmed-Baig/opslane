@@ -1,34 +1,66 @@
-use crate::models::{NewProject, Project};
+use crate::models::Project;
 use crate::state::AppState;
 use tauri::State;
 
-/// Get all projects for a session
+/// Get or create a project by repository path
+/// Returns existing project if path already tracked, otherwise creates new
 #[tauri::command]
-pub async fn get_session_projects(
-    session_id: String,
+pub async fn get_or_create_project(
+    local_repo_path: String,
     state: State<'_, AppState>,
-) -> Result<Vec<Project>, String> {
+) -> Result<Project, String> {
+    // Validate and canonicalize the path
+    let path = std::path::Path::new(&local_repo_path);
+
+    // Security: Ensure the path is absolute
+    if !path.is_absolute() {
+        return Err("Path must be absolute".to_string());
+    }
+
+    // Canonicalize to resolve symlinks and ensure path is valid
+    let canonical_path = path
+        .canonicalize()
+        .map_err(|e| format!("Invalid path: {e}"))?;
+
+    // Ensure it's a directory
+    if !canonical_path.is_dir() {
+        return Err("Path must be a directory".to_string());
+    }
+
+    // Convert back to string
+    let canonical_path_str = canonical_path.to_string_lossy().to_string();
+
     state
         .db
-        .get_session_projects(&session_id)
+        .get_or_create_project(&canonical_path_str)
         .await
-        .map_err(|e| format!("Failed to get projects: {e}"))
+        .map_err(|e| format!("Failed to get or create project: {e}"))
 }
 
-/// Create a new project
+/// List all projects ordered by recently opened
 #[tauri::command]
-pub async fn create_project(
-    new_project: NewProject,
+pub async fn list_projects(state: State<'_, AppState>) -> Result<Vec<Project>, String> {
+    state
+        .db
+        .list_projects()
+        .await
+        .map_err(|e| format!("Failed to list projects: {e}"))
+}
+
+/// Get a single project by ID
+#[tauri::command]
+pub async fn get_project(
+    project_id: String,
     state: State<'_, AppState>,
 ) -> Result<Project, String> {
     state
         .db
-        .create_project(new_project)
+        .get_project(&project_id)
         .await
-        .map_err(|e| format!("Failed to create project: {e}"))
+        .map_err(|e| format!("Failed to get project: {e}"))
 }
 
-/// Delete a project (soft delete)
+/// Delete a project (soft delete, cascades to sessions)
 #[tauri::command]
 pub async fn delete_project(project_id: String, state: State<'_, AppState>) -> Result<(), String> {
     state

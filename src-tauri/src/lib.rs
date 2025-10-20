@@ -59,20 +59,17 @@ pub fn run() {
             create_session,
             get_session,
             list_sessions,
+            list_sessions_by_project,
             delete_session,
             get_container_logs,
             // Message commands
             send_message,
             get_messages,
             // Project commands
-            get_session_projects,
-            create_project,
+            get_or_create_project,
+            list_projects,
+            get_project,
             delete_project,
-            // Task commands
-            get_project_tasks,
-            create_task,
-            update_task_status,
-            delete_task,
             // Change tracking commands
             get_session_changes,
             // Credentials commands

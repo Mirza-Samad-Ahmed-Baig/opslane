@@ -312,13 +312,20 @@ impl SessionManager {
     ///
     /// Emits progress events throughout the process.
     pub async fn setup_container(&self, session_id: &str, app_handle: &AppHandle) -> Result<()> {
-        // Get session from database
+        log::info!("Setting up container for session {session_id}");
+
+        // 1. Get session from DB
         let mut session = self.db.get_session(session_id).await?;
+
+        // 2. Get project to retrieve local_repo_path
+        let project = self.db.get_project(&session.project_id).await?;
+        let local_repo_path = &project.local_repo_path;
 
         log::info!("========================================");
         log::info!("setup_container called for session {session_id}");
         log::info!("  name: {}", session.name);
-        log::info!("  path: {}", session.local_repo_path);
+        log::info!("  project: {}", project.name);
+        log::info!("  path: {local_repo_path}");
         log::info!("  branch: {}", session.base_branch);
         log::info!("========================================");
 
@@ -326,7 +333,7 @@ impl SessionManager {
         const TOTAL_STEPS: u8 = 5;
 
         // Calculate repo size for progress message
-        let repo_size_mb = Self::get_dir_size_mb(&session.local_repo_path).await;
+        let repo_size_mb = Self::get_dir_size_mb(local_repo_path).await;
         let size_display = if repo_size_mb >= 1000.0 {
             format!("{:.1} GB", repo_size_mb / 1000.0)
         } else if repo_size_mb > 0.0 {
@@ -352,7 +359,7 @@ impl SessionManager {
 
         // Step 1: Copy repository to session-specific location
         let (session_repo_path, _copied_size_mb) = match self
-            .copy_repo_for_session(session_id, &session.local_repo_path)
+            .copy_repo_for_session(session_id, local_repo_path)
             .await
         {
             Ok((path, size)) => (path, size),
@@ -609,10 +616,15 @@ impl SessionManager {
     /// New code should create session in DB first, then call setup_container in background.
     #[allow(dead_code)]
     pub async fn create_session(&self, new: NewSession, app_handle: AppHandle) -> Result<Session> {
+        // Get project to retrieve local_repo_path
+        let project = self.db.get_project(&new.project_id).await?;
+        let local_repo_path = &project.local_repo_path;
+
         log::info!("========================================");
         log::info!("create_session called");
         log::info!("  name: {}", new.name);
-        log::info!("  path: {}", new.local_repo_path);
+        log::info!("  project: {}", project.name);
+        log::info!("  path: {local_repo_path}");
         log::info!("  branch: {}", new.base_branch);
         log::info!("  has_initial_message: {}", new.initial_message.is_some());
         log::info!("========================================");
@@ -635,7 +647,7 @@ impl SessionManager {
         );
 
         // Calculate repo size for progress message
-        let repo_size_mb = Self::get_dir_size_mb(&session.local_repo_path).await;
+        let repo_size_mb = Self::get_dir_size_mb(local_repo_path).await;
         let size_display = if repo_size_mb >= 1000.0 {
             format!("{:.1} GB", repo_size_mb / 1000.0)
         } else if repo_size_mb > 0.0 {
@@ -664,7 +676,7 @@ impl SessionManager {
 
         // Step 1.5: Copy repository to session-specific location
         let (session_repo_path, _copied_size_mb) = match self
-            .copy_repo_for_session(&session.id, &session.local_repo_path)
+            .copy_repo_for_session(&session.id, local_repo_path)
             .await
         {
             Ok((path, size)) => (path, size),
