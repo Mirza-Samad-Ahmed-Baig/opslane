@@ -71,11 +71,6 @@ export function ChatMessage({ message }: ChatMessageProps) {
           (!message.tools || message.tools.length === 0) && (
             <div className="text-sm text-muted-foreground/60 italic">No displayable content</div>
           )}
-
-        {/* Timestamp (subtle, lower contrast per Calm Technology) */}
-        <p className="text-xs text-muted-foreground/60">
-          {new Date(message.timestamp).toLocaleTimeString()}
-        </p>
       </div>
     </div>
   );

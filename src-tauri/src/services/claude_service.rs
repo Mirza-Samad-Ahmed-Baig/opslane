@@ -42,7 +42,6 @@ pub struct ParsedMessage {
     pub message_type: String,
     pub role: Option<String>,
     pub content_blocks: Vec<ContentBlock>,
-    pub timestamp: String,
     pub usage: Option<UsageInfo>,
     pub request_id: Option<String>,
     pub session_id: String,
@@ -347,12 +346,6 @@ fn parse_claude_jsonl_line(line: &str) -> Result<Option<ParsedMessage>> {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    let timestamp = json
-        .get("timestamp")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
     // Parse content blocks based on message type
     let content_blocks = match message_type.as_str() {
         "user" | "assistant" => parse_message_content_blocks(&json)?,
@@ -379,7 +372,6 @@ fn parse_claude_jsonl_line(line: &str) -> Result<Option<ParsedMessage>> {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
         content_blocks,
-        timestamp,
         usage,
         request_id: json
             .get("requestId")

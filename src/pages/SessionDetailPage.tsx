@@ -83,11 +83,10 @@ export function SessionDetailPage() {
       uuid: 'optimistic-initial',
       role: 'user',
       text: session.initial_message,
-      timestamp: session.created_at,
       tools: [],
       status: 'complete',
     };
-  }, [session?.initial_message, session?.created_at]);
+  }, [session?.initial_message]);
 
   logger.debug('[SessionDetail] Session status', {
     sessionId: id,

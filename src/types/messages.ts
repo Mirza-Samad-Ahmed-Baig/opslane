@@ -6,7 +6,6 @@ export interface MessageEnvelope {
   messageType: 'user' | 'assistant' | 'file-history-snapshot' | 'system';
   role?: 'user' | 'assistant';
   contentBlocks: ContentBlock[];
-  timestamp: string;
   usage?: UsageInfo;
   requestId?: string;
   sessionId: string;
@@ -91,7 +90,6 @@ export interface DisplayMessage {
   id: string;
   uuid: string;
   role: 'user' | 'assistant';
-  timestamp: string;
   status: MessageStatus;
 
   // Content
@@ -119,7 +117,6 @@ export interface ToolExecution {
 export interface FileSummary {
   count: number;
   files: string[];
-  timestamp: string;
 }
 
 export type MessageStatus = 'sending' | 'sent' | 'error' | 'streaming' | 'complete';

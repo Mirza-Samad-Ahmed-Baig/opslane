@@ -42,7 +42,6 @@ export function useChatMessages({
           uuid: generateMessageId('initial-uuid'),
           role: 'user',
           text: initialMessage,
-          timestamp: new Date().toISOString(),
           status: 'sent',
         },
       ];
@@ -118,7 +117,6 @@ export function useChatMessages({
       id: envelope.id,
       uuid: envelope.uuid,
       role: envelope.role || 'assistant',
-      timestamp: envelope.timestamp,
       status: 'complete',
       text: hasText ? text : undefined, // Only include text if non-empty
       tools: tools.length > 0 ? tools : undefined,
@@ -271,7 +269,6 @@ export function useChatMessages({
                 uuid: generateMessageId('error-uuid'),
                 role: 'assistant' as const,
                 text: `Error: ${streamEvent.message}`,
-                timestamp: new Date().toISOString(),
                 status: 'error' as const,
               },
             ]);
@@ -309,7 +306,6 @@ export function useChatMessages({
           uuid: generateMessageId('user-uuid'),
           role: 'user',
           text: content.trim(),
-          timestamp: new Date().toISOString(),
           status: 'sending',
         };
         setMessages((prev) => [...prev, userMessage]);
