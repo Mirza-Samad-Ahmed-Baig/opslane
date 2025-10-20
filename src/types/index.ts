@@ -7,6 +7,5 @@ export type {
   SessionStatus,
 } from './session';
 
-// Re-export project and task types
+// Re-export project types
 export type { Project, NewProject } from './project';
-export type { Task, NewTask, TaskStatus } from './task';

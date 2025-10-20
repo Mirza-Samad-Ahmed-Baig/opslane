@@ -115,14 +115,9 @@ export function useCreateSession() {
     mutationFn: async (params: { projectId: string; newSession: NewSession }) => {
       logger.debug('[useCreateSession] Creating session', params);
 
-      // Validate project_id matches
-      if (params.newSession.project_id !== params.projectId) {
-        throw new Error('Project ID mismatch');
-      }
-
       const session = await invoke<Session>('create_session', {
-        project_id: params.projectId,
-        new_session: params.newSession,
+        projectId: params.projectId,
+        newSession: params.newSession,
       });
 
       logger.debug('[useCreateSession] Session created', { session });
@@ -158,7 +153,7 @@ export function useSessionsByProject(projectId: string | undefined) {
       }
       logger.debug('[useSessionsByProject] Fetching sessions', { projectId });
       const sessions = await invoke<Session[]>('list_sessions_by_project', {
-        project_id: projectId,
+        projectId,
       });
       return sessions;
     },
@@ -177,7 +172,7 @@ export function useDeleteSession() {
     mutationFn: async (sessionId: string) => {
       logger.debug('Deleting session', { sessionId });
       try {
-        await invoke<void>('delete_session', { session_id: sessionId });
+        await invoke<void>('delete_session', { sessionId });
         logger.info('Session deleted successfully', { sessionId });
       } catch (error) {
         logger.error('Failed to delete session', error as Error);

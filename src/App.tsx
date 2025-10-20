@@ -1,8 +1,6 @@
 import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Link, useNavigate } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { register, unregisterAll } from '@tauri-apps/plugin-global-shortcut';
-import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 import { Palette, FolderOpen, Loader2 } from 'lucide-react';
@@ -17,7 +15,6 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { SessionList } from '@/components/SessionList';
-import { NewSessionDialog } from '@/components/NewSessionDialog';
 import { ComponentShowcase } from '@/pages/ComponentShowcase';
 import { SessionDetailPage } from '@/pages/SessionDetailPage';
 import { queryClient } from '@/lib/query-client';
@@ -29,7 +26,6 @@ import './App.css';
 
 function HomePage() {
   const navigate = useNavigate();
-  const [showNewDialog, setShowNewDialog] = useState(false);
   const [quickStartMessage, setQuickStartMessage] = useState('');
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -189,40 +185,6 @@ function HomePage() {
       if (unlisten) {
         unlisten();
       }
-    };
-  }, []);
-
-  // Register global shortcuts
-  useEffect(() => {
-    const setupShortcuts = async () => {
-      try {
-        // Register Cmd+N / Ctrl+N for new session
-        await register('CommandOrControl+N', async (event) => {
-          if (event.state === 'Pressed') {
-            // Focus window if not focused (ignore permission errors)
-            try {
-              const window = getCurrentWebviewWindow();
-              await window.setFocus();
-            } catch (err) {
-              // Silently ignore focus errors - window will still show dialog
-              const error = err as Error;
-              logger.debug('Could not set window focus', { error: error.message });
-            }
-            setShowNewDialog(true);
-          }
-        });
-
-        logger.info('Keyboard shortcuts registered');
-      } catch (error) {
-        logger.error('Failed to register shortcuts', error as Error);
-      }
-    };
-
-    setupShortcuts();
-
-    // Cleanup on unmount
-    return () => {
-      unregisterAll().catch((e) => logger.error('Failed to unregister shortcuts', e));
     };
   }, []);
 
@@ -402,9 +364,6 @@ function HomePage() {
           </div>
         </div>
       </div>
-
-      {/* New Session Dialog */}
-      <NewSessionDialog open={showNewDialog} onOpenChange={setShowNewDialog} />
     </div>
   );
 }
