@@ -4,7 +4,7 @@ import { useSessions } from '@/hooks';
 import { cn } from '@/lib/utils';
 
 interface SessionListProps {
-  onCreateClick: () => void;
+  onCreateClick?: () => void;
   activeSessionId?: string;
 }
 

@@ -5,17 +5,25 @@ import { register, unregisterAll } from '@tauri-apps/plugin-global-shortcut';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
-import { Palette, Send, FolderOpen, Loader2 } from 'lucide-react';
+import { Palette, FolderOpen, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { SessionList } from '@/components/SessionList';
 import { NewSessionDialog } from '@/components/NewSessionDialog';
 import { ComponentShowcase } from '@/pages/ComponentShowcase';
 import { SessionDetailPage } from '@/pages/SessionDetailPage';
 import { queryClient } from '@/lib/query-client';
-import { useDockerStatus, useCreateSession } from '@/hooks';
-import type { SessionProgressEvent } from '@/types/session';
+import { useDockerStatus, useCreateSession, useProjects, useGetOrCreateProject } from '@/hooks';
+import type { SessionProgressEvent, NewSession } from '@/types/session';
+import type { Project } from '@/types/project';
 import { logger } from './utils/logger';
 import './App.css';
 
@@ -23,9 +31,11 @@ function HomePage() {
   const navigate = useNavigate();
   const [showNewDialog, setShowNewDialog] = useState(false);
   const [quickStartMessage, setQuickStartMessage] = useState('');
-  const [repoPath, setRepoPath] = useState('');
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { data: dockerAvailable } = useDockerStatus();
+  const { data: projects } = useProjects();
+  const getOrCreateProject = useGetOrCreateProject();
   const createSession = useCreateSession();
 
   // Track if we're currently creating a session (for button feedback only)
@@ -35,18 +45,19 @@ function HomePage() {
   const handleQuickStart = async () => {
     logger.info('[App] handleQuickStart called', {
       hasMessage: !!quickStartMessage.trim(),
-      hasPath: !!repoPath.trim(),
+      hasProject: !!selectedProject,
       isCreating,
     });
 
-    if (!quickStartMessage.trim() || !repoPath.trim() || isCreating) {
+    if (!quickStartMessage.trim() || !selectedProject || isCreating) {
       logger.warn('[App] handleQuickStart blocked', {
         reason: !quickStartMessage.trim()
           ? 'no message'
-          : !repoPath.trim()
-            ? 'no path'
+          : !selectedProject
+            ? 'no project'
             : 'already creating',
       });
+      setError(!selectedProject ? 'Please select a project directory' : 'Please enter a message');
       return;
     }
 
@@ -54,19 +65,28 @@ function HomePage() {
     setError(null);
 
     const tempMessage = quickStartMessage.trim();
-    const tempPath = repoPath.trim();
 
     logger.info('[App] Starting session creation', {
       message: tempMessage.slice(0, 50),
-      path: tempPath,
+      projectId: selectedProject.id,
+      projectName: selectedProject.name,
     });
 
     try {
-      const session = await createSession.mutateAsync({
-        name: tempMessage.slice(0, 50),
-        local_repo_path: tempPath,
+      // Generate session name from message (first 50 chars)
+      const sessionName = tempMessage.slice(0, 50);
+
+      // Create session
+      const newSession: NewSession = {
+        project_id: selectedProject.id,
+        name: sessionName,
         base_branch: 'main',
         initial_message: tempMessage,
+      };
+
+      const session = await createSession.mutateAsync({
+        projectId: selectedProject.id,
+        newSession,
       });
 
       logger.info('[App] Session created successfully', {
@@ -77,7 +97,7 @@ function HomePage() {
 
       // Clear inputs
       setQuickStartMessage('');
-      setRepoPath('');
+      setSelectedProject(null);
 
       // Navigate immediately to chat - let SessionDetailPage handle setup state
       logger.info('[App] Navigating to session', {
@@ -100,20 +120,20 @@ function HomePage() {
       const err = error as Error;
       logger.error('[App] Failed to create quick-start session', err);
       setError(
-        err.message || 'Failed to create session. Please check your repository path and try again.'
+        err.message || 'Failed to create session. Please check your settings and try again.'
       );
       setIsCreating(false);
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey && repoPath.trim()) {
+    if (e.key === 'Enter' && !e.shiftKey && selectedProject) {
       e.preventDefault();
       handleQuickStart();
     }
   };
 
-  // Open directory picker
+  // Open directory picker and create/get project
   const handleBrowseFolder = async () => {
     try {
       const selected = await open({
@@ -123,11 +143,26 @@ function HomePage() {
       });
 
       if (selected && typeof selected === 'string') {
-        setRepoPath(selected);
+        // Get or create project for this path
+        const project = await getOrCreateProject.mutateAsync(selected);
+        setSelectedProject(project);
+        setError(null);
       }
     } catch (error) {
-      logger.error('Failed to open directory picker', error as Error);
+      logger.error('Failed to open directory picker or create project', error as Error);
+      setError('Failed to select directory');
     }
+  };
+
+  // Handle project selection from selector
+  const handleProjectSelect = (project: Project) => {
+    setSelectedProject(project);
+    setError(null);
+  };
+
+  // Clear selection (go back to selector)
+  const handleClearSelection = () => {
+    setSelectedProject(null);
   };
 
   // Simple event listener for logging progress events
@@ -219,15 +254,18 @@ function HomePage() {
       <div className="flex-1 flex overflow-hidden">
         {/* Left Navigation Panel - Session List - hidden on mobile, visible on tablet+ */}
         <div className="hidden md:flex w-60 flex-shrink-0 flex-col overflow-auto">
-          <SessionList onCreateClick={() => setShowNewDialog(true)} />
+          <SessionList />
         </div>
 
         {/* Center Panel - Quick-start input */}
         <div className="flex-1 flex items-center justify-center bg-background">
           {/* Quick-start Input Form */}
-          <div className="w-full max-w-2xl px-8">
-            <h2 className="text-2xl font-semibold text-center mb-6">
-              What are we working on today?
+          <div className="w-full max-w-4xl px-4 sm:px-8">
+            <h2
+              id="quickstart-heading"
+              className="text-2xl sm:text-3xl font-semibold text-center mb-6 sm:mb-8"
+            >
+              What are we coding next?
             </h2>
 
             {/* Error Alert */}
@@ -245,77 +283,107 @@ function HomePage() {
               </Alert>
             )}
 
-            {/* Repository Path Input */}
-            <div className="mb-4">
-              <label className="text-sm font-medium mb-2 block">Project Repository Path</label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={repoPath}
-                  onChange={(e) => setRepoPath(e.target.value)}
-                  placeholder="/path/to/your/project"
-                  disabled={!dockerAvailable || isCreating}
-                  aria-describedby="form-status"
-                  className="flex-1 px-3 py-2 text-sm border border-input bg-background rounded-md focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                />
-                <Button
-                  onClick={handleBrowseFolder}
-                  disabled={!dockerAvailable || isCreating}
-                  variant="outline"
-                  size="sm"
-                  className="flex items-center gap-2"
-                >
-                  <FolderOpen className="h-4 w-4" />
-                  Browse
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Click Browse to select your git repository folder
-              </p>
-            </div>
-
-            {/* Message Input */}
-            <div className="relative">
+            {/* Chat-style Input Box */}
+            <div className="border-2 rounded-xl overflow-hidden bg-background shadow-sm">
+              {/* Message Input */}
               <Textarea
+                id="task-description"
+                aria-labelledby="quickstart-heading"
                 value={quickStartMessage}
                 onChange={(e) => setQuickStartMessage(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={
-                  isCreating ? 'Creating session...' : 'Describe what you want to work on...'
-                }
-                disabled={!dockerAvailable || !repoPath.trim() || isCreating}
-                aria-describedby="form-status"
-                className="min-h-32 pr-12 text-base resize-none"
+                placeholder="Describe a task"
+                disabled={!dockerAvailable || isCreating}
+                className="min-h-[200px] border-0 text-base resize-none p-6"
               />
-              <Button
-                onClick={handleQuickStart}
-                disabled={
-                  !quickStartMessage.trim() || !repoPath.trim() || !dockerAvailable || isCreating
-                }
-                size="icon"
-                className="absolute bottom-3 right-3"
-                title={isCreating ? 'Creating session...' : 'Start new session'}
-              >
-                {isCreating ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
+
+              {/* Bottom Bar - Responsive */}
+              <div className="border-t bg-muted/30 px-4 sm:px-6 py-3 sm:py-4 flex flex-wrap items-center gap-2 sm:gap-3">
+                {/* Repository Selector */}
+                {!selectedProject ? (
+                  <Select
+                    value=""
+                    onValueChange={(value) => {
+                      if (value === '__browse__') {
+                        handleBrowseFolder();
+                      } else if (value) {
+                        const project = projects?.find((p) => p.id === value);
+                        if (project) {
+                          handleProjectSelect(project);
+                        }
+                      }
+                    }}
+                    disabled={getOrCreateProject.isPending}
+                  >
+                    <SelectTrigger className="w-full sm:flex-1">
+                      <SelectValue placeholder="Select a repository..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {projects && projects.length > 0 && (
+                        <>
+                          {projects.map((project) => (
+                            <SelectItem key={project.id} value={project.id}>
+                              {project.name}
+                            </SelectItem>
+                          ))}
+                          <SelectItem
+                            value="__separator__"
+                            disabled
+                            className="h-px bg-border my-1"
+                          >
+                            {/* Separator */}
+                          </SelectItem>
+                        </>
+                      )}
+                      <SelectItem value="__browse__">Browse for new project...</SelectItem>
+                    </SelectContent>
+                  </Select>
                 ) : (
-                  <Send className="h-4 w-4" />
+                  <div className="w-full sm:flex-1 flex items-center gap-2 px-3 py-2 border border-input bg-muted/50 rounded-md h-9">
+                    <FolderOpen className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                    <span className="text-sm font-medium truncate flex-1">
+                      {selectedProject.name}
+                    </span>
+                    <button
+                      onClick={handleClearSelection}
+                      className="text-xs text-muted-foreground hover:text-foreground underline flex-shrink-0"
+                    >
+                      Change
+                    </button>
+                  </div>
                 )}
-              </Button>
+
+                {/* Model Selector */}
+                <Select defaultValue="sonnet">
+                  <SelectTrigger className="w-full sm:w-[140px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="sonnet">Sonnet</SelectItem>
+                    <SelectItem value="opus">Opus</SelectItem>
+                    <SelectItem value="haiku">Haiku</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {/* Start Button */}
+                <Button
+                  onClick={handleQuickStart}
+                  disabled={
+                    !quickStartMessage.trim() || !selectedProject || !dockerAvailable || isCreating
+                  }
+                  className="w-full sm:w-auto px-8"
+                >
+                  {isCreating ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      Creating...
+                    </>
+                  ) : (
+                    'Start'
+                  )}
+                </Button>
+              </div>
             </div>
-            <p
-              id="form-status"
-              className="text-xs text-muted-foreground text-center mt-3"
-              role="status"
-              aria-live="polite"
-              aria-atomic="true"
-            >
-              {isCreating
-                ? 'Creating your session...'
-                : !repoPath.trim()
-                  ? 'Enter a repository path first'
-                  : 'Press Enter to start a new session'}
-            </p>
           </div>
         </div>
       </div>
