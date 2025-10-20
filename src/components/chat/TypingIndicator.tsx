@@ -1,27 +1,34 @@
-import { Bot } from 'lucide-react';
+import { motion } from 'framer-motion';
 
 export function TypingIndicator() {
   return (
-    <div
-      className="flex gap-3 mb-4"
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.2 }}
+      className="flex items-center gap-2 py-3 px-4"
       role="status"
       aria-live="polite"
-      aria-label="Assistant is typing"
+      aria-label="Claude is thinking"
     >
-      <div
-        className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-500/10 flex items-center justify-center"
-        aria-hidden="true"
-      >
-        <Bot className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-      </div>
-      <div className="bg-muted rounded-lg px-4 py-2">
-        <div className="flex gap-1">
-          <div className="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce [animation-delay:0ms]" />
-          <div className="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce [animation-delay:150ms]" />
-          <div className="w-2 h-2 bg-muted-foreground/50 rounded-full animate-bounce [animation-delay:300ms]" />
-        </div>
-      </div>
-      <span className="sr-only">Assistant is typing</span>
-    </div>
+      {/* Pulsing dot - Calm Technology: slow, subtle animation */}
+      <motion.div
+        className="h-2 w-2 rounded-full bg-primary"
+        style={{ willChange: 'transform, opacity' }}
+        animate={{
+          opacity: [0.4, 1, 0.4],
+          scale: [0.95, 1, 0.95],
+        }}
+        transition={{
+          duration: 2, // Slow pulse (Calm Technology)
+          repeat: Infinity,
+          ease: 'easeInOut',
+        }}
+      />
+
+      {/* Text - muted color for Calm Technology */}
+      <span className="text-sm text-muted-foreground">Claude is thinking...</span>
+    </motion.div>
   );
 }

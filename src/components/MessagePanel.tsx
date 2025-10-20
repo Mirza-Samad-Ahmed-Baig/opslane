@@ -45,12 +45,17 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
   // 2. Session setup is complete (not setting up anymore)
   // 3. We don't have any assistant messages yet (Claude hasn't responded)
   const [waitingTimeout, setWaitingTimeout] = useState(false);
+  const [streamingTimeout, setStreamingTimeout] = useState(false);
 
   const isWaitingForClaudeResponse =
     !!optimisticMessage &&
     !isSettingUp &&
     !displayMessages.some((m) => m.role === 'assistant') &&
     !waitingTimeout;
+
+  // Check if any messages are actively streaming (multi-turn support)
+  const hasStreamingMessages =
+    displayMessages.some((m) => m.status === 'streaming') && !streamingTimeout;
 
   // BLOCKER FIX: Add timeout for waiting state (60 seconds)
   useEffect(() => {
@@ -66,6 +71,23 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
 
     return () => clearTimeout(timeoutId);
   }, [isWaitingForClaudeResponse]);
+
+  // Timeout protection for stuck streaming messages (60 seconds)
+  useEffect(() => {
+    const streamingMessages = displayMessages.filter((m) => m.status === 'streaming');
+
+    if (streamingMessages.length === 0) {
+      setStreamingTimeout(false);
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      setStreamingTimeout(true);
+      console.warn('[MessagePanel] Timeout for streaming messages - stuck state detected');
+    }, 60000); // 60 second timeout
+
+    return () => clearTimeout(timeoutId);
+  }, [displayMessages]);
 
   // Virtual scrolling (enabled for >50 messages per Performance Budget)
   const virtualizer = useVirtualizer({
@@ -203,7 +225,22 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
                 <span className="text-sm">Setting up session...</span>
               </div>
             )}
-            {(isSending || isWaitingForClaudeResponse) && !isSettingUp && <TypingIndicator />}
+            {(isSending || isWaitingForClaudeResponse || hasStreamingMessages) && !isSettingUp && (
+              <TypingIndicator />
+            )}
+
+            {/* Timeout messages */}
+            {waitingTimeout && (
+              <div className="text-sm text-muted-foreground text-center py-4" role="alert">
+                Claude is taking longer than expected. You can try sending another message.
+              </div>
+            )}
+            {streamingTimeout && (
+              <div className="text-sm text-muted-foreground text-center py-4" role="alert">
+                Streaming timed out. The response may be incomplete. You can try sending another
+                message.
+              </div>
+            )}
           </div>
         ) : (
           // Regular rendering for <50 messages (simpler, no virtualization overhead)
@@ -227,12 +264,22 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
             )}
 
             {/* Typing indicator (shown during streaming or waiting for initial response) */}
-            {(isSending || isWaitingForClaudeResponse) && !isSettingUp && <TypingIndicator />}
+            {(isSending || isWaitingForClaudeResponse || hasStreamingMessages) && !isSettingUp && (
+              <TypingIndicator />
+            )}
 
             {/* BLOCKER FIX: Show message if waiting timed out */}
             {waitingTimeout && (
               <div className="text-sm text-muted-foreground text-center py-4" role="alert">
                 Claude is taking longer than expected. You can try sending another message.
+              </div>
+            )}
+
+            {/* Show message if streaming timed out */}
+            {streamingTimeout && (
+              <div className="text-sm text-muted-foreground text-center py-4" role="alert">
+                Streaming timed out. The response may be incomplete. You can try sending another
+                message.
               </div>
             )}
           </div>
@@ -242,13 +289,19 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
       {/* Chat input */}
       <ChatInput
         onSend={sendMessage}
-        disabled={isSending || isLoading || isSettingUp || isWaitingForClaudeResponse}
+        disabled={
+          isSending ||
+          isLoading ||
+          isSettingUp ||
+          isWaitingForClaudeResponse ||
+          hasStreamingMessages
+        }
         placeholder={
           isSettingUp
             ? 'Setting up session...'
-            : isWaitingForClaudeResponse
-              ? 'Waiting for Claude...'
-              : waitingTimeout
+            : isWaitingForClaudeResponse || hasStreamingMessages
+              ? 'Claude is thinking...'
+              : waitingTimeout || streamingTimeout
                 ? 'Timed out - try sending a new message'
                 : 'Ask Claude to help with your code...'
         }
