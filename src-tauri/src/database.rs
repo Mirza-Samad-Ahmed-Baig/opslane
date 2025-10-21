@@ -102,7 +102,8 @@ impl Database {
                       container_id, container_name, container_branch,
                       status, error_message, volume_name, claude_session_id,
                       last_activity_at, initial_message,
-                      created_at, updated_at, is_deleted
+                      created_at, updated_at, is_deleted,
+                      last_sync_at, sync_status
             "#,
         )
         .bind(&id)
@@ -126,7 +127,8 @@ impl Database {
                    s.container_id, s.container_name, s.container_branch,
                    s.status, s.error_message, s.volume_name, s.claude_session_id,
                    s.last_activity_at, s.initial_message,
-                   s.created_at, s.updated_at, s.is_deleted
+                   s.created_at, s.updated_at, s.is_deleted,
+                   s.last_sync_at, s.sync_status
             FROM sessions s
             WHERE s.is_deleted = 0
             ORDER BY s.created_at DESC
@@ -147,7 +149,8 @@ impl Database {
                    container_id, container_name, container_branch,
                    status, error_message, volume_name, claude_session_id,
                    last_activity_at, initial_message,
-                   created_at, updated_at, is_deleted
+                   created_at, updated_at, is_deleted,
+                   last_sync_at, sync_status
             FROM sessions
             WHERE id = ? AND is_deleted = 0
             "#,
@@ -481,7 +484,8 @@ impl Database {
                    container_id, container_name, container_branch,
                    status, error_message, volume_name, claude_session_id,
                    last_activity_at, initial_message,
-                   created_at, updated_at, is_deleted
+                   created_at, updated_at, is_deleted,
+                   last_sync_at, sync_status
             FROM sessions
             WHERE project_id = ? AND is_deleted = 0
             ORDER BY created_at DESC
