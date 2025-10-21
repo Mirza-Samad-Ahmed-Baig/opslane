@@ -26,6 +26,10 @@ export interface Session {
   // Optimistic UI: Store initial message for instant display (Phase 1)
   initial_message: string | null;
 
+  // Sync tracking
+  last_sync_at?: string;
+  sync_status?: 'idle' | 'syncing' | 'synced' | 'error';
+
   created_at: string; // ISO 8601 timestamp
   updated_at: string; // ISO 8601 timestamp
   is_deleted: boolean;

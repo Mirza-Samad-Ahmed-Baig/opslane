@@ -1,13 +1,16 @@
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Loader2, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { ArrowLeft, Loader2, AlertCircle, ChevronDown, ChevronUp, Upload } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { useSession } from '@/hooks/useSession';
-import { useProject } from '@/hooks';
+import { useSession, useProject, useSessionChanges, useSyncSession } from '@/hooks';
 import { SessionList } from '@/components/SessionList';
 import { MessagePanel } from '@/components/MessagePanel';
 import { DiffViewer } from '@/components/DiffViewer';
 import { SessionStatusBadge } from '@/components/SessionStatusBadge';
+import { SyncConfirmDialog } from '@/components/SyncConfirmDialog';
+import { SyncProgressModal } from '@/components/SyncProgressModal';
 import { logger } from '@/utils/logger';
 import type { DisplayMessage, ImageAttachment } from '@/types/messages';
 
@@ -35,9 +38,13 @@ export function SessionDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
+  const queryClient = useQueryClient();
   const { data: session, isLoading, error } = useSession(id!);
   const { data: project } = useProject(session?.project_id);
+  const { data: changes } = useSessionChanges(id!);
+  const { syncing, progress, syncToProject } = useSyncSession(id!);
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
+  const [showSyncDialog, setShowSyncDialog] = useState(false);
 
   // Extract initialImages from navigation state (passed from Quick Start)
   const state = location.state as SessionDetailLocationState | null;
@@ -102,6 +109,48 @@ export function SessionDetailPage() {
       status: 'complete',
     };
   }, [session?.initial_message, initialImages]);
+
+  // Handle sync to project
+  const handleSync = async () => {
+    try {
+      const result = await syncToProject();
+
+      // Handle partial failures
+      if (result.files_failed.length > 0) {
+        toast.warning('Sync Partially Complete', {
+          description: `✓ Synced ${result.files_synced} files\n✗ Failed: ${result.files_failed.length} files`,
+          duration: 8000,
+          action: {
+            label: 'View Errors',
+            onClick: () => {
+              console.error('Sync errors:', result.files_failed);
+              toast.error('Sync Errors', {
+                description: result.files_failed.map((f) => `${f.path}: ${f.error}`).join('\n'),
+                duration: 10000,
+              });
+            },
+          },
+        });
+      } else {
+        // Full success
+        toast.success('Sync Complete', {
+          description: `Synced ${result.files_synced} ${result.files_synced === 1 ? 'file' : 'files'} in ${result.duration_ms}ms`,
+          duration: 4000,
+        });
+      }
+
+      // Invalidate changes query
+      queryClient.invalidateQueries({ queryKey: ['changes', id] });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('Sync failed:', error);
+
+      toast.error('Sync Failed', {
+        description: errorMessage,
+        duration: 8000,
+      });
+    }
+  };
 
   logger.debug('[SessionDetail] Session status', {
     sessionId: id,
@@ -177,7 +226,30 @@ export function SessionDetailPage() {
             {session.base_branch} {project && `• ${project.local_repo_path}`}
           </p>
         </div>
-        <SessionStatusBadge status={session.status} />
+        <div className="flex items-center gap-2">
+          {session.status === 'ready' && changes && changes.length > 0 && (
+            <Button
+              variant="outline"
+              onClick={() => setShowSyncDialog(true)}
+              disabled={syncing}
+              className="gap-2"
+              title={syncing ? 'Syncing changes...' : 'Sync changes to project'}
+            >
+              {syncing ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Syncing...
+                </>
+              ) : (
+                <>
+                  <Upload className="h-4 w-4" />
+                  Sync {changes.length} {changes.length === 1 ? 'Change' : 'Changes'}
+                </>
+              )}
+            </Button>
+          )}
+          <SessionStatusBadge status={session.status} />
+        </div>
       </header>
 
       {/* Setup progress banner */}
@@ -296,6 +368,19 @@ export function SessionDetailPage() {
           <DiffViewer sessionId={session.id} />
         </div>
       </div>
+
+      {/* Sync dialogs */}
+      {project && changes && (
+        <SyncConfirmDialog
+          open={showSyncDialog}
+          onOpenChange={setShowSyncDialog}
+          onConfirm={handleSync}
+          changes={changes}
+          projectPath={project.local_repo_path}
+        />
+      )}
+
+      <SyncProgressModal open={syncing} progress={progress} />
     </div>
   );
 }

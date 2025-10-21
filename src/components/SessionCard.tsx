@@ -115,6 +115,11 @@ export function SessionCard({ session }: SessionCardProps) {
                   <span className="font-medium">Error:</span> {session.error_message}
                 </div>
               )}
+              {session.last_sync_at && (
+                <div className="text-xs text-muted-foreground/70 mt-2">
+                  Last synced: {new Date(session.last_sync_at).toLocaleString()}
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
