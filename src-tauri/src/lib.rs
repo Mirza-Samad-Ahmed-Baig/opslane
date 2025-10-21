@@ -65,6 +65,8 @@ pub fn run() {
             // Message commands
             send_message,
             get_messages,
+            // Image commands
+            copy_image_to_session,
             // Project commands
             get_or_create_project,
             list_projects,

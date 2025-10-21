@@ -419,6 +419,7 @@ impl SessionManager {
             .docker
             .create_container(
                 &container_name,
+                session_id,
                 &session_repo_path,
                 cpu_limit,
                 memory_limit_mb,
@@ -736,6 +737,7 @@ impl SessionManager {
             .docker
             .create_container(
                 &container_name,
+                &session.id,
                 &session_repo_path, // CHANGED: Use copy instead of original
                 cpu_limit,
                 memory_limit_mb,
@@ -1005,6 +1007,17 @@ impl SessionManager {
 
             if let Err(e) = tokio::fs::remove_dir_all(session_repo_path).await {
                 log::error!("Failed to remove session repo copy: {e}");
+                // Non-fatal, continue with deletion
+            }
+        }
+
+        // Step 2.5: Clean up session images directory
+        let session_images_dir = format!("/tmp/opslane-sessions/{session_id}/images");
+        if std::path::Path::new(&session_images_dir).exists() {
+            log::info!("Removing session images at {session_images_dir}");
+
+            if let Err(e) = tokio::fs::remove_dir_all(&session_images_dir).await {
+                log::error!("Failed to remove session images: {e}");
                 // Non-fatal, continue with deletion
             }
         }

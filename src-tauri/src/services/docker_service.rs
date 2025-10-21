@@ -64,6 +64,7 @@ impl DockerService {
     pub async fn create_container(
         &self,
         container_name: &str,
+        session_id: &str,
         repo_path: &str,
         cpu_limit: f64,
         memory_limit_mb: i64,
@@ -110,9 +111,16 @@ impl DockerService {
         log::debug!("Ensured .claude directory exists at {claude_dir}");
 
         // Configure bind mounts
+        let session_images_path = format!("/tmp/opslane-sessions/{session_id}/images");
+
+        // Ensure images directory exists
+        std::fs::create_dir_all(&session_images_path)
+            .map_err(|e| anyhow!("Failed to create session images directory: {e}"))?;
+
         let bindings = vec![
             format!("{}:/workspace/repo:rw", repo_path_buf.display()),
             format!("{claude_dir}:/home/claude/.claude:rw"),
+            format!("{session_images_path}:/workspace/images:rw"),
         ];
 
         log::info!("Mounting host {claude_dir} to /home/claude/.claude");
@@ -586,6 +594,7 @@ mod tests {
         let container_id = docker
             .create_container(
                 "opslane-test-host-mount",
+                "test-session-id",
                 temp_dir.to_str().unwrap(),
                 1.0,
                 512,
@@ -618,7 +627,13 @@ mod tests {
 
         // Create a test container
         let container_id = service
-            .create_container("test-exec", temp_dir.to_str().unwrap(), 1.0, 512)
+            .create_container(
+                "test-exec",
+                "test-session-id",
+                temp_dir.to_str().unwrap(),
+                1.0,
+                512,
+            )
             .await
             .expect("Failed to create container");
 
@@ -657,7 +672,13 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
 
         let container_id = service
-            .create_container("test-exec-stream", temp_dir.to_str().unwrap(), 1.0, 512)
+            .create_container(
+                "test-exec-stream",
+                "test-session-id",
+                temp_dir.to_str().unwrap(),
+                1.0,
+                512,
+            )
             .await
             .expect("Failed to create container");
 
