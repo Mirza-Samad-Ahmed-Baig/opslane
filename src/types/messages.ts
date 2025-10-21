@@ -20,7 +20,8 @@ export type ContentBlock =
   | ToolUseBlock
   | ToolResultBlock
   | ThinkingBlock
-  | FileHistoryBlock;
+  | FileHistoryBlock
+  | ImageBlock;
 
 export interface TextBlock {
   type: 'text';
@@ -60,6 +61,19 @@ export interface FileBackup {
   backupTime: string;
 }
 
+// Supported image MIME types
+export type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+
+export interface ImageBlock {
+  type: 'image';
+  source: {
+    media_type: ImageMediaType;
+  } & (
+    | { type: 'path'; path: string } // Filesystem path to the image file
+    | { type: 'base64'; data: string } // Base64 data URL (includes data:image/...;base64, prefix)
+  );
+}
+
 // Type guards for content blocks
 export function isTextBlock(block: ContentBlock): block is TextBlock {
   return block.type === 'text' && 'text' in block;
@@ -75,6 +89,10 @@ export function isToolResultBlock(block: ContentBlock): block is ToolResultBlock
 
 export function isThinkingBlock(block: ContentBlock): block is ThinkingBlock {
   return block.type === 'thinking' && 'thinking' in block;
+}
+
+export function isImageBlock(block: ContentBlock): block is ImageBlock {
+  return block.type === 'image' && 'source' in block;
 }
 
 // Token usage info
@@ -97,10 +115,17 @@ export interface DisplayMessage {
   tools?: ToolExecution[];
   thinking?: string;
   fileChanges?: FileSummary;
+  images?: ImageAttachment[];
 
   // Metadata
   usage?: UsageInfo;
   requestId?: string;
+}
+
+export interface ImageAttachment {
+  source: {
+    media_type: ImageMediaType;
+  } & ({ type: 'path'; path: string } | { type: 'base64'; data: string });
 }
 
 export interface ToolExecution {
