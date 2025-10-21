@@ -74,6 +74,8 @@ pub fn run() {
             delete_project,
             // Change tracking commands
             get_session_changes,
+            // Sync commands
+            sync_session_to_project,
             // Credentials commands
             get_claude_credentials,
         ])

@@ -1,5 +1,6 @@
+use crate::commands::changes::FileChange;
 use crate::database::Database;
-use crate::models::{NewSession, Session};
+use crate::models::{NewSession, Session, SyncError, SyncResult};
 use crate::services::DockerService;
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -8,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::Path;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Window};
 
 /// Event payload for session status changes
 ///
@@ -1030,6 +1031,302 @@ impl SessionManager {
 
         log::info!("Successfully deleted session {session_id}");
         Ok(())
+    }
+
+    /// Sync changed files from container back to project directory
+    pub async fn sync_back_to_project(
+        &self,
+        session_id: &str,
+        window: &Window,
+    ) -> Result<SyncResult> {
+        let start_time = std::time::Instant::now();
+
+        // 1. Get session and verify it's ready
+        let session = self
+            .db
+            .get_session(session_id)
+            .await
+            .map_err(|e| anyhow!("Failed to get session: {e}"))?;
+
+        if session.status != "ready" {
+            return Err(anyhow!("Session is not ready for sync"));
+        }
+
+        let container_id = session
+            .container_id
+            .clone()
+            .ok_or_else(|| anyhow!("Session has no container"))?;
+
+        // 2. Get project to find sync target
+        let project = self
+            .db
+            .get_project(&session.project_id)
+            .await
+            .map_err(|e| anyhow!("Failed to get project: {e}"))?;
+
+        let target_path = &project.local_repo_path;
+
+        // 3. Validate target path exists and is writable
+        let target_dir = std::path::Path::new(target_path);
+        if !target_dir.exists() {
+            return Err(anyhow!("Project directory not found: {target_path}"));
+        }
+        if target_dir
+            .metadata()
+            .map(|m| m.permissions().readonly())
+            .unwrap_or(true)
+        {
+            return Err(anyhow!("Project directory is read-only: {target_path}"));
+        }
+
+        // 4. Update sync status to 'syncing'
+        self.db.update_session_sync(session_id, "syncing").await?;
+        self.emit_event(
+            window,
+            "session-sync-status",
+            json!({
+                "session_id": session_id,
+                "status": "syncing",
+            }),
+        );
+
+        // 5. Get changed files
+        let changes = self.get_session_changes_internal(&session).await?;
+
+        if changes.is_empty() {
+            self.db.update_session_sync(session_id, "synced").await?;
+            return Ok(SyncResult {
+                files_synced: 0,
+                files_failed: vec![],
+                bytes_synced: 0,
+                duration_ms: start_time.elapsed().as_millis() as u64,
+            });
+        }
+
+        // 6. Emit progress event
+        self.emit_event(
+            window,
+            "sync-progress",
+            json!({
+                "session_id": session_id,
+                "message": format!("Syncing {} files...", changes.len()),
+                "current": 0,
+                "total": changes.len(),
+            }),
+        );
+
+        // 7. Sync each file
+        let mut files_synced = 0;
+        let mut files_failed = Vec::new();
+        let mut bytes_synced = 0u64;
+
+        for (index, change) in changes.iter().enumerate() {
+            // Emit progress
+            self.emit_event(
+                window,
+                "sync-progress",
+                json!({
+                    "session_id": session_id,
+                    "message": format!("Syncing {}...", change.path),
+                    "current": index + 1,
+                    "total": changes.len(),
+                }),
+            );
+
+            // Sync individual file
+            match self
+                .sync_file(&container_id, &change.path, &change.status, target_path)
+                .await
+            {
+                Ok(size) => {
+                    files_synced += 1;
+                    bytes_synced += size;
+                }
+                Err(e) => {
+                    files_failed.push(SyncError {
+                        path: change.path.clone(),
+                        error: e.to_string(),
+                    });
+                }
+            }
+        }
+
+        // 8. Update final sync status
+        let final_status = if files_failed.is_empty() {
+            "synced"
+        } else {
+            "error"
+        };
+        self.db
+            .update_session_sync(session_id, final_status)
+            .await?;
+
+        // 9. Emit completion event
+        self.emit_event(
+            window,
+            "session-sync-complete",
+            json!({
+                "session_id": session_id,
+                "files_synced": files_synced,
+                "files_failed": files_failed.len(),
+            }),
+        );
+
+        Ok(SyncResult {
+            files_synced,
+            files_failed,
+            bytes_synced,
+            duration_ms: start_time.elapsed().as_millis() as u64,
+        })
+    }
+
+    /// Sync a single file from container to target
+    async fn sync_file(
+        &self,
+        container_id: &str,
+        file_path: &str,
+        status: &str,
+        target_base: &str,
+    ) -> Result<u64> {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        use tokio::fs;
+
+        let target_file = std::path::Path::new(target_base).join(file_path);
+
+        // Path traversal protection: ensure target_file is within target_base
+        let base_canonical = std::path::Path::new(target_base)
+            .canonicalize()
+            .map_err(|e| anyhow!("Failed to canonicalize base path: {e}"))?;
+
+        // Create parent directories first so we can canonicalize the full path
+        if let Some(parent) = target_file.parent() {
+            fs::create_dir_all(parent)
+                .await
+                .map_err(|e| anyhow!("Failed to create directory: {e}"))?;
+        }
+
+        // Now canonicalize the target path (after parent exists)
+        let target_canonical = target_file
+            .canonicalize()
+            .or_else(|_| {
+                // If file doesn't exist yet, canonicalize parent and join filename
+                if let (Some(parent), Some(filename)) =
+                    (target_file.parent(), target_file.file_name())
+                {
+                    parent.canonicalize().map(|p| p.join(filename))
+                } else {
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "Invalid target path",
+                    ))
+                }
+            })
+            .map_err(|e| anyhow!("Failed to resolve target path: {e}"))?;
+
+        // Verify the target is within the base directory
+        if !target_canonical.starts_with(&base_canonical) {
+            return Err(anyhow!("Path traversal detected: {file_path}"));
+        }
+
+        // Handle deleted files
+        if status == "deleted" {
+            if target_file.exists() {
+                fs::remove_file(&target_file)
+                    .await
+                    .map_err(|e| anyhow!("Failed to delete file: {e}"))?;
+            }
+            return Ok(0);
+        }
+
+        // Read file content from container using base64 to handle binary files
+        let cmd = vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            format!("base64 /workspace/repo/{}", file_path),
+        ];
+
+        let encoded_content = self
+            .docker
+            .exec_command_blocking(container_id, cmd, None, false)
+            .await?;
+
+        // Decode base64 content
+        let content = STANDARD
+            .decode(encoded_content.trim())
+            .map_err(|e| anyhow!("Failed to decode file content: {e}"))?;
+
+        let size = content.len() as u64;
+
+        // Write binary content to target
+        fs::write(&target_file, content)
+            .await
+            .map_err(|e| anyhow!("Failed to write file: {e}"))?;
+
+        Ok(size)
+    }
+
+    /// Internal method to get session changes (doesn't require Window)
+    async fn get_session_changes_internal(&self, session: &Session) -> Result<Vec<FileChange>> {
+        let container_id = session
+            .container_id
+            .as_ref()
+            .ok_or_else(|| anyhow!("Session has no container"))?;
+
+        let cmd = vec![
+            "git".to_string(),
+            "status".to_string(),
+            "--porcelain".to_string(),
+        ];
+
+        let output = self
+            .docker
+            .exec_command_blocking(
+                container_id,
+                cmd,
+                Some("/workspace/repo".to_string()),
+                false,
+            )
+            .await?;
+
+        let mut changes = Vec::new();
+
+        for line in output.lines() {
+            if line.len() < 4 {
+                continue;
+            }
+
+            let status_code = &line[0..2];
+            let file_path = &line[3..];
+
+            // Validate file path
+            if file_path.contains('\0') || file_path.contains('\n') || file_path.starts_with('-') {
+                continue;
+            }
+
+            let status = match status_code.trim() {
+                "A" | "??" => "added",
+                "M" => "modified",
+                "D" => "deleted",
+                _ => "modified",
+            };
+
+            changes.push(FileChange {
+                path: file_path.to_string(),
+                status: status.to_string(),
+                additions: 0,
+                deletions: 0,
+                diff: String::new(),
+            });
+        }
+
+        Ok(changes)
+    }
+
+    /// Emit event helper
+    fn emit_event<T: serde::Serialize + Clone>(&self, window: &Window, event: &str, payload: T) {
+        if let Err(e) = window.emit(event, payload) {
+            log::error!("Failed to emit event {event}: {e}");
+        }
     }
 }
 

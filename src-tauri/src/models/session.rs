@@ -40,6 +40,10 @@ pub struct Session {
     pub created_at: String,
     pub updated_at: String,
     pub is_deleted: bool,
+
+    // Sync tracking
+    pub last_sync_at: Option<String>, // ISO 8601 timestamp
+    pub sync_status: Option<String>,  // "idle" | "syncing" | "synced" | "error"
 }
 
 impl Session {

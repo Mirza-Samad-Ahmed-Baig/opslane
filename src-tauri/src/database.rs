@@ -321,6 +321,32 @@ impl Database {
         Ok(())
     }
 
+    /// Update session sync status and timestamp
+    pub async fn update_session_sync(&self, session_id: &str, sync_status: &str) -> Result<()> {
+        // Validate sync_status
+        let valid_statuses = ["idle", "syncing", "synced", "error"];
+        if !valid_statuses.contains(&sync_status) {
+            return Err(anyhow::anyhow!("Invalid sync status: {sync_status}"));
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
+
+        sqlx::query(
+            r#"
+            UPDATE sessions
+            SET sync_status = ?, last_sync_at = ?, updated_at = datetime('now')
+            WHERE id = ?
+            "#,
+        )
+        .bind(sync_status)
+        .bind(&now)
+        .bind(session_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
     // ============================================================================
     // Projects
     // ============================================================================
