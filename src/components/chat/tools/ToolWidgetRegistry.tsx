@@ -1,10 +1,10 @@
 import { ComponentType } from 'react';
 import type { ToolWidgetProps } from './BaseToolWidget';
 import { GenericToolWidget } from './GenericToolWidget';
-// Import tool-specific widgets as they're implemented
-// import { ReadToolWidget } from './ReadToolWidget';
-// import { BashToolWidget } from './BashToolWidget';
-// etc.
+import { ReadToolWidget } from './ReadToolWidget';
+import { BashToolWidget } from './BashToolWidget';
+import { EditToolWidget } from './EditToolWidget';
+import { TaskToolWidget } from './TaskToolWidget';
 
 /**
  * Registry mapping tool names to their widget components
@@ -13,11 +13,11 @@ import { GenericToolWidget } from './GenericToolWidget';
  * Phase 4: Replace with tool-specific widgets
  */
 const toolWidgetMap: Record<string, ComponentType<ToolWidgetProps>> = {
-  // Phase 4: Uncomment as widgets are implemented
-  // Read: ReadToolWidget,
-  // Bash: BashToolWidget,
-  // Edit: EditToolWidget,
-  // Task: TaskToolWidget,
+  Read: ReadToolWidget,
+  Bash: BashToolWidget,
+  Edit: EditToolWidget,
+  Task: TaskToolWidget,
+  // Future widgets:
   // Grep: GrepToolWidget,
   // Glob: GlobToolWidget,
   // Write: WriteToolWidget,

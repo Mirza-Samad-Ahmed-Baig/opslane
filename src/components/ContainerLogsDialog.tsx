@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -20,7 +20,7 @@ export function ContainerLogsDialog({
   const [logs, setLogs] = useState<string>('');
   const [loading, setLoading] = useState(false);
 
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async () => {
     setLoading(true);
     try {
       const result = await invoke<string>('get_container_logs', { sessionId });
@@ -30,13 +30,13 @@ export function ContainerLogsDialog({
     } finally {
       setLoading(false);
     }
-  };
+  }, [sessionId]);
 
   useEffect(() => {
     if (open) {
       fetchLogs();
     }
-  }, [open, sessionId]);
+  }, [open, fetchLogs]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
