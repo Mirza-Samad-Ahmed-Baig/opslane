@@ -2,14 +2,17 @@ import { useState } from 'react';
 import { Send, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import type { ImageAttachment } from '@/types/messages';
 
 interface ChatInputProps {
-  onSend: (message: string) => void;
+  sessionId: string; // Required for image copying in Phase 3
+  onSend: (message: string, images?: ImageAttachment[]) => void;
   disabled?: boolean;
   placeholder?: string;
 }
 
 export function ChatInput({
+  sessionId: _sessionId, // eslint-disable-line @typescript-eslint/no-unused-vars -- Will be used in Phase 3 for image handling
   onSend,
   disabled = false,
   placeholder = 'Type a message...',

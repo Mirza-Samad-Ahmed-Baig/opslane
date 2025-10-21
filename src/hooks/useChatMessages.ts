@@ -1,8 +1,21 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import type { MessageEnvelope, DisplayMessage, StreamEvent, ToolExecution } from '@/types/messages';
-import { isTextBlock, isToolUseBlock, isToolResultBlock, isThinkingBlock } from '@/types/messages';
+import type {
+  MessageEnvelope,
+  DisplayMessage,
+  StreamEvent,
+  ToolExecution,
+  ImageAttachment,
+  ContentBlockInput,
+} from '@/types/messages';
+import {
+  isTextBlock,
+  isToolUseBlock,
+  isToolResultBlock,
+  isThinkingBlock,
+  isImageBlock,
+} from '@/types/messages';
 
 interface UseChatMessagesOptions {
   sessionId: string;
@@ -17,7 +30,7 @@ interface UseChatMessagesReturn {
   isLoading: boolean;
   isSending: boolean;
   error: string | null;
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (content: string, images?: ImageAttachment[]) => Promise<void>;
   clearError: () => void;
 }
 
@@ -100,14 +113,24 @@ export function useChatMessages({
     const thinkingBlocks = envelope.contentBlocks.filter(isThinkingBlock);
     const thinking = thinkingBlocks.length > 0 ? thinkingBlocks[0]?.thinking : undefined;
 
+    // Extract image blocks
+    const imageBlocks = envelope.contentBlocks.filter(isImageBlock);
+    const images: ImageAttachment[] | undefined =
+      imageBlocks.length > 0
+        ? imageBlocks.map((block) => ({
+            source: block.source,
+          }))
+        : undefined;
+
     // Validate that message has displayable content
     const hasText = text && text.trim().length > 0;
     const hasTools = tools.length > 0;
     const hasThinking = thinking && thinking.length > 0;
+    const hasImages = images && images.length > 0;
 
     // Skip messages with no displayable content
     // (This prevents empty user messages from showing)
-    if (!hasText && !hasTools && !hasThinking) {
+    if (!hasText && !hasTools && !hasThinking && !hasImages) {
       return null;
     }
 
@@ -119,6 +142,7 @@ export function useChatMessages({
       text: hasText ? text : undefined, // Only include text if non-empty
       tools: tools.length > 0 ? tools : undefined,
       thinking,
+      images,
       usage: envelope.usage,
       requestId: envelope.requestId,
     };
@@ -329,8 +353,14 @@ export function useChatMessages({
 
   // Send message function
   const sendMessage = useCallback(
-    async (content: string) => {
-      if (!content.trim() || isSending) return;
+    async (content: string, images?: ImageAttachment[]) => {
+      // Validate input
+      if (isSending) return;
+
+      if (!content.trim() && !images?.length) {
+        setError('Cannot send empty message. Please enter text or attach an image.');
+        return;
+      }
 
       try {
         setIsSending(true);
@@ -343,15 +373,35 @@ export function useChatMessages({
           id: userMsgId,
           uuid: generateMessageId('user-uuid'),
           role: 'user',
-          text: content.trim(),
+          text: content.trim() || undefined,
+          images: images?.length ? images : undefined,
           status: 'sending',
         };
         setMessages((prev) => [...prev, userMessage]);
 
-        // Call send_message command (returns immediately, streams via events)
+        // Build content blocks with proper typing
+        const contentBlocks: ContentBlockInput[] = [];
+
+        if (content.trim()) {
+          contentBlocks.push({
+            type: 'text',
+            text: content.trim(),
+          });
+        }
+
+        if (images?.length) {
+          images.forEach((img) => {
+            contentBlocks.push({
+              type: 'image',
+              source: img.source,
+            });
+          });
+        }
+
+        // Call send_message command with structured content
         await invoke('send_message', {
           sessionId,
-          content: content.trim(),
+          contentBlocks,
         });
 
         // Mark user message as sent

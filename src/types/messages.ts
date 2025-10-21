@@ -128,6 +128,21 @@ export interface ImageAttachment {
   } & ({ type: 'path'; path: string } | { type: 'base64'; data: string });
 }
 
+// Content block input types for sending messages to backend
+export type ContentBlockInput = TextBlockInput | ImageBlockInput;
+
+export interface TextBlockInput {
+  type: 'text';
+  text: string;
+}
+
+export interface ImageBlockInput {
+  type: 'image';
+  source: {
+    media_type: ImageMediaType;
+  } & ({ type: 'path'; path: string } | { type: 'base64'; data: string });
+}
+
 export interface ToolExecution {
   id: string;
   name: string;

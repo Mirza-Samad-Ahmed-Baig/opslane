@@ -368,6 +368,7 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
 
       {/* Chat input */}
       <ChatInput
+        sessionId={sessionId}
         onSend={sendMessage}
         disabled={
           isSending ||
