@@ -1,4 +1,4 @@
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Loader2, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -9,7 +9,14 @@ import { MessagePanel } from '@/components/MessagePanel';
 import { DiffViewer } from '@/components/DiffViewer';
 import { SessionStatusBadge } from '@/components/SessionStatusBadge';
 import { logger } from '@/utils/logger';
-import type { DisplayMessage } from '@/types/messages';
+import type { DisplayMessage, ImageAttachment } from '@/types/messages';
+
+interface SessionDetailLocationState {
+  initialMessage?: string;
+  initialImages?: ImageAttachment[];
+  isNewSession?: boolean;
+  isSettingUp?: boolean;
+}
 
 /**
  * SessionDetailPage - Three-column layout for session detail view
@@ -27,9 +34,14 @@ import type { DisplayMessage } from '@/types/messages';
 export function SessionDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { data: session, isLoading, error } = useSession(id!);
   const { data: project } = useProject(session?.project_id);
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
+
+  // Extract initialImages from navigation state (passed from Quick Start)
+  const state = location.state as SessionDetailLocationState | null;
+  const initialImages = state?.initialImages;
 
   // Determine if session is setting up based on actual status
   const isSettingUp = session && session.status !== 'ready' && session.status !== 'error';
@@ -85,10 +97,11 @@ export function SessionDetailPage() {
       uuid: 'optimistic-initial',
       role: 'user',
       text: session.initial_message,
+      images: initialImages, // Include images from Quick Start navigation state
       tools: [],
       status: 'complete',
     };
-  }, [session?.initial_message]);
+  }, [session?.initial_message, initialImages]);
 
   logger.debug('[SessionDetail] Session status', {
     sessionId: id,

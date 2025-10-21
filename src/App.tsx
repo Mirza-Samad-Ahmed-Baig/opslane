@@ -6,7 +6,6 @@ import { listen } from '@tauri-apps/api/event';
 import { Palette, FolderOpen, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
-import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -14,6 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { ChatInput } from '@/components/chat/ChatInput';
 import { SessionList } from '@/components/SessionList';
 import { ComponentShowcase } from '@/pages/ComponentShowcase';
 import { SessionDetailPage } from '@/pages/SessionDetailPage';
@@ -21,12 +21,12 @@ import { queryClient } from '@/lib/query-client';
 import { useDockerStatus, useCreateSession, useProjects, useGetOrCreateProject } from '@/hooks';
 import type { SessionProgressEvent, NewSession } from '@/types/session';
 import type { Project } from '@/types/project';
+import type { ImageAttachment } from '@/types/messages';
 import { logger } from './utils/logger';
 import './App.css';
 
 function HomePage() {
   const navigate = useNavigate();
-  const [quickStartMessage, setQuickStartMessage] = useState('');
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isBrowsing, setIsBrowsing] = useState(false);
@@ -38,17 +38,18 @@ function HomePage() {
   // Track if we're currently creating a session (for button feedback only)
   const [isCreating, setIsCreating] = useState(false);
 
-  // Simplified Quick-start handler
-  const handleQuickStart = async () => {
+  // Quick-start handler - now accepts images from ChatInput
+  const handleQuickStart = async (message: string, images?: ImageAttachment[]) => {
     logger.info('[App] handleQuickStart called', {
-      hasMessage: !!quickStartMessage.trim(),
+      hasMessage: !!message.trim(),
       hasProject: !!selectedProject,
+      hasImages: images?.length || 0,
       isCreating,
     });
 
-    if (!quickStartMessage.trim() || !selectedProject || isCreating) {
+    if (!message.trim() || !selectedProject || isCreating) {
       logger.warn('[App] handleQuickStart blocked', {
-        reason: !quickStartMessage.trim()
+        reason: !message.trim()
           ? 'no message'
           : !selectedProject
             ? 'no project'
@@ -61,12 +62,13 @@ function HomePage() {
     setIsCreating(true);
     setError(null);
 
-    const tempMessage = quickStartMessage.trim();
+    const tempMessage = message.trim();
 
     logger.info('[App] Starting session creation', {
       message: tempMessage.slice(0, 50),
       projectId: selectedProject.id,
       projectName: selectedProject.name,
+      imageCount: images?.length || 0,
     });
 
     try {
@@ -92,8 +94,7 @@ function HomePage() {
         name: session.name,
       });
 
-      // Clear inputs
-      setQuickStartMessage('');
+      // Clear project selection (ChatInput clears its own state)
       setSelectedProject(null);
 
       // Navigate immediately to chat - let SessionDetailPage handle setup state
@@ -105,6 +106,7 @@ function HomePage() {
       navigate(`/session/${session.id}`, {
         state: {
           initialMessage: tempMessage,
+          initialImages: images, // Pass images along with initial message
           isNewSession: true,
           // Pass true if not ready yet, so chat can show "Setting up..." indicator
           isSettingUp: session.status !== 'ready',
@@ -120,13 +122,6 @@ function HomePage() {
         err.message || 'Failed to create session. Please check your settings and try again.'
       );
       setIsCreating(false);
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey && selectedProject) {
-      e.preventDefault();
-      handleQuickStart();
     }
   };
 
@@ -249,117 +244,96 @@ function HomePage() {
               </Alert>
             )}
 
-            {/* Chat-style Input Box */}
-            <div className="border-2 rounded-xl overflow-hidden bg-background shadow-sm">
-              {/* Message Input */}
-              <Textarea
-                id="task-description"
-                aria-labelledby="quickstart-heading"
-                value={quickStartMessage}
-                onChange={(e) => setQuickStartMessage(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Describe a task"
-                disabled={!dockerAvailable || isCreating}
-                className="min-h-[200px] border-0 text-base resize-none p-6"
-              />
-
-              {/* Bottom Bar - Responsive */}
-              <div className="border-t bg-muted/30 px-4 sm:px-6 py-3 sm:py-4 flex flex-wrap items-center gap-2 sm:gap-3">
-                {/* Repository Selector */}
-                {!selectedProject ? (
-                  <Select
-                    value=""
-                    onValueChange={(value) => {
-                      if (value === '__browse__') {
-                        handleBrowseFolder();
-                      } else if (value) {
-                        const project = projects?.find((p) => p.id === value);
-                        if (project) {
-                          handleProjectSelect(project);
-                        }
+            {/* Repository/Model Selection Bar */}
+            <div className="border-2 rounded-t-xl bg-muted/30 px-4 sm:px-6 py-3 sm:py-4 flex flex-wrap items-center gap-2 sm:gap-3">
+              {/* Repository Selector */}
+              {!selectedProject ? (
+                <Select
+                  value=""
+                  onValueChange={(value) => {
+                    if (value === '__browse__') {
+                      handleBrowseFolder();
+                    } else if (value) {
+                      const project = projects?.find((p) => p.id === value);
+                      if (project) {
+                        handleProjectSelect(project);
                       }
-                    }}
-                    disabled={isBrowsing || getOrCreateProject.isPending}
-                  >
-                    <SelectTrigger className="w-full sm:flex-1">
-                      <SelectValue
-                        placeholder={isBrowsing ? 'Browsing...' : 'Select a repository...'}
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {projects && projects.length > 0 && (
-                        <>
-                          {projects.map((project) => (
-                            <SelectItem key={project.id} value={project.id}>
-                              {project.name}
-                            </SelectItem>
-                          ))}
-                          <SelectItem
-                            value="__separator__"
-                            disabled
-                            className="h-px bg-border my-1"
-                          >
-                            {/* Separator */}
-                          </SelectItem>
-                        </>
-                      )}
-                      <SelectItem value="__browse__" disabled={isBrowsing}>
-                        {isBrowsing ? (
-                          <span className="flex items-center gap-2">
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                            Browsing...
-                          </span>
-                        ) : (
-                          'Browse for new project...'
-                        )}
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <div className="w-full sm:flex-1 flex items-center gap-2 px-3 py-2 border border-input bg-muted/50 rounded-md h-9 transition-colors hover:bg-muted/70">
-                    <FolderOpen className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                    <span className="text-sm font-medium truncate flex-1">
-                      {selectedProject.name}
-                    </span>
-                    <button
-                      onClick={handleClearSelection}
-                      className="text-xs text-muted-foreground hover:text-foreground underline flex-shrink-0 transition-colors"
-                    >
-                      Change
-                    </button>
-                  </div>
-                )}
-
-                {/* Model Selector */}
-                <Select defaultValue="sonnet">
-                  <SelectTrigger className="w-full sm:w-[140px]">
-                    <SelectValue />
+                    }
+                  }}
+                  disabled={isBrowsing || getOrCreateProject.isPending}
+                >
+                  <SelectTrigger className="w-full sm:flex-1">
+                    <SelectValue
+                      placeholder={isBrowsing ? 'Browsing...' : 'Select a repository...'}
+                    />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="sonnet">Sonnet</SelectItem>
-                    <SelectItem value="opus">Opus</SelectItem>
-                    <SelectItem value="haiku">Haiku</SelectItem>
+                    {projects && projects.length > 0 && (
+                      <>
+                        {projects.map((project) => (
+                          <SelectItem key={project.id} value={project.id}>
+                            {project.name}
+                          </SelectItem>
+                        ))}
+                        <SelectItem value="__separator__" disabled className="h-px bg-border my-1">
+                          {/* Separator */}
+                        </SelectItem>
+                      </>
+                    )}
+                    <SelectItem value="__browse__" disabled={isBrowsing}>
+                      {isBrowsing ? (
+                        <span className="flex items-center gap-2">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Browsing...
+                        </span>
+                      ) : (
+                        'Browse for new project...'
+                      )}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
+              ) : (
+                <div className="w-full sm:flex-1 flex items-center gap-2 px-3 py-2 border border-input bg-muted/50 rounded-md h-9 transition-colors hover:bg-muted/70">
+                  <FolderOpen className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                  <span className="text-sm font-medium truncate flex-1">
+                    {selectedProject.name}
+                  </span>
+                  <button
+                    onClick={handleClearSelection}
+                    className="text-xs text-muted-foreground hover:text-foreground underline flex-shrink-0 transition-colors"
+                  >
+                    Change
+                  </button>
+                </div>
+              )}
 
-                {/* Start Button */}
-                <Button
-                  onClick={handleQuickStart}
-                  disabled={
-                    !quickStartMessage.trim() || !selectedProject || !dockerAvailable || isCreating
-                  }
-                  className="w-full sm:w-auto px-8"
-                >
-                  {isCreating ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                      Creating...
-                    </>
-                  ) : (
-                    'Start'
-                  )}
-                </Button>
-              </div>
+              {/* Model Selector */}
+              <Select defaultValue="sonnet">
+                <SelectTrigger className="w-full sm:w-[140px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sonnet">Sonnet</SelectItem>
+                  <SelectItem value="opus">Opus</SelectItem>
+                  <SelectItem value="haiku">Haiku</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Chat Input with image support */}
+            <div className="border-2 border-t-0 rounded-b-xl overflow-hidden bg-background shadow-sm">
+              <ChatInput
+                sessionId={undefined} // No session yet for quick start
+                onSend={handleQuickStart}
+                disabled={!selectedProject || !dockerAvailable || isCreating}
+                placeholder={
+                  !selectedProject
+                    ? 'Select a repository first...'
+                    : isCreating
+                      ? 'Creating session...'
+                      : 'Describe a task'
+                }
+              />
             </div>
           </div>
         </div>
