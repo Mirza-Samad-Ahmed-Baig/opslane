@@ -25,9 +25,10 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
   const parentRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
 
-  const { messages, isLoading, isSending, error, sendMessage, clearError } = useChatMessages({
-    sessionId,
-  });
+  const { messages, isLoading, isSending, error, streamingTimeout, sendMessage, clearError } =
+    useChatMessages({
+      sessionId,
+    });
 
   // Phase 1: Merge optimistic message with real messages
   // Show optimistic message if we have one and no real user message yet
@@ -54,7 +55,6 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
   // 2. Session setup is complete (not setting up anymore)
   // 3. We don't have any assistant messages yet (Claude hasn't responded)
   const [waitingTimeout, setWaitingTimeout] = useState(false);
-  const [streamingTimeout, setStreamingTimeout] = useState(false);
 
   const isWaitingForClaudeResponse =
     !!optimisticMessage &&
@@ -63,6 +63,7 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
     !waitingTimeout;
 
   // Check if any messages are actively streaming (multi-turn support)
+  // Note: streamingTimeout is now managed by useChatMessages hook (10-minute catastrophic timeout)
   const hasStreamingMessages =
     displayMessages.some((m) => m.status === 'streaming') && !streamingTimeout;
 
@@ -80,23 +81,6 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
 
     return () => clearTimeout(timeoutId);
   }, [isWaitingForClaudeResponse]);
-
-  // Timeout protection for stuck streaming messages (60 seconds)
-  useEffect(() => {
-    const streamingMessages = displayMessages.filter((m) => m.status === 'streaming');
-
-    if (streamingMessages.length === 0) {
-      setStreamingTimeout(false);
-      return;
-    }
-
-    const timeoutId = setTimeout(() => {
-      setStreamingTimeout(true);
-      console.warn('[MessagePanel] Timeout for streaming messages - stuck state detected');
-    }, 60000); // 60 second timeout
-
-    return () => clearTimeout(timeoutId);
-  }, [displayMessages]);
 
   // Virtual scrolling (enabled for >50 messages per Performance Budget)
   const virtualizer = useVirtualizer({
@@ -303,8 +287,8 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
             )}
             {streamingTimeout && (
               <div className="text-sm text-muted-foreground text-center py-4" role="alert">
-                Streaming timed out. The response may be incomplete. You can try sending another
-                message.
+                No response from Claude for 10 minutes. The backend may have crashed. Please try
+                refreshing or restarting the session.
               </div>
             )}
           </div>
@@ -355,11 +339,11 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
               </div>
             )}
 
-            {/* Show message if streaming timed out */}
+            {/* Show message if streaming timed out (catastrophic failure) */}
             {streamingTimeout && (
               <div className="text-sm text-muted-foreground text-center py-4" role="alert">
-                Streaming timed out. The response may be incomplete. You can try sending another
-                message.
+                No response from Claude for 10 minutes. The backend may have crashed. Please try
+                refreshing or restarting the session.
               </div>
             )}
           </div>

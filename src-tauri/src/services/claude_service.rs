@@ -5,6 +5,7 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 /// Events emitted during Claude message streaming
@@ -539,10 +540,27 @@ async fn stream_docker_output(
         let mut line_buffer = String::new();
         const MAX_LINE_LENGTH: usize = 1024 * 1024; // 1MB max per line
 
-        // ✅ Read stream chunk-by-chunk (like Opcode reads stdout)
-        while let Some(chunk_result) = stream.next().await {
+        // Track tool names for better tool_result event reporting
+        let mut tool_name_map: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+
+        // ✅ Stream stall timeout: Detect if backend becomes truly unresponsive
+        // This is backend-driven failure detection (not frontend guessing)
+        // Configurable via CLAUDE_STREAM_TIMEOUT_MINS environment variable (default: 15 minutes)
+        let timeout_minutes = std::env::var("CLAUDE_STREAM_TIMEOUT_MINS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(15);
+        let stream_stall_timeout = Duration::from_secs(timeout_minutes * 60);
+
+        // ✅ Read stream chunk-by-chunk with timeout detection
+        loop {
+            // Wait for next chunk with timeout
+            let chunk_result = tokio::time::timeout(stream_stall_timeout, stream.next()).await;
+
             match chunk_result {
-                Ok(chunk) => {
+                Ok(Some(Ok(chunk))) => {
+                    // ✅ Activity detected - process chunk normally
                     line_buffer.push_str(&chunk);
 
                     // Protect against unbounded line buffer growth from malformed streams
@@ -597,6 +615,44 @@ async fn stream_docker_output(
                                 let msg_type = &parsed.message_type;
                                 log::info!("✓ Parsed displayable message type: {msg_type}");
 
+                                // ✅ NEW: Extract and emit tool events from content blocks
+                                // These serve as heartbeat signals during long operations
+                                for block in &parsed.content_blocks {
+                                    match block {
+                                        ContentBlock::ToolUse { id, name, input: _ } => {
+                                            // Track tool name for later result events
+                                            tool_name_map.insert(id.clone(), name.clone());
+
+                                            log::info!("→ Emitting tool_use event: {name}");
+                                            tx.send(StreamEvent::ToolUse {
+                                                tool_name: name.clone(),
+                                            })
+                                            .await
+                                            .ok();
+                                        }
+                                        ContentBlock::ToolResult {
+                                            tool_use_id,
+                                            content: _,
+                                            is_error,
+                                        } => {
+                                            // Look up the actual tool name from our map
+                                            let tool_name = tool_name_map
+                                                .get(tool_use_id)
+                                                .cloned()
+                                                .unwrap_or_else(|| "unknown".to_string());
+
+                                            log::info!("→ Emitting tool_result event: {tool_name}, success={}", !is_error);
+                                            tx.send(StreamEvent::ToolResult {
+                                                tool_name,
+                                                success: !is_error,
+                                            })
+                                            .await
+                                            .ok();
+                                        }
+                                        _ => {}
+                                    }
+                                }
+
                                 // ✅ Emit message immediately (real-time streaming)
                                 // Serialize to match frontend expectations
                                 match serde_json::to_string(&parsed) {
@@ -621,10 +677,27 @@ async fn stream_docker_output(
                         }
                     }
                 }
-                Err(e) => {
+                Ok(Some(Err(e))) => {
+                    // Stream error from Docker/Claude
                     log::error!("Stream error: {e}");
                     tx.send(StreamEvent::Error {
                         message: format!("Stream error: {e}"),
+                    })
+                    .await
+                    .ok();
+                    break;
+                }
+                Ok(None) => {
+                    // Stream ended naturally
+                    break;
+                }
+                Err(_timeout_elapsed) => {
+                    // ✅ Stream stalled - no output after configured timeout
+                    log::error!("Stream stalled for {timeout_minutes} minutes without output");
+                    tx.send(StreamEvent::Error {
+                        message: format!(
+                            "Claude stopped responding after {timeout_minutes} minutes. This may be due to a network issue or the process being stuck. Try restarting the session."
+                        ),
                     })
                     .await
                     .ok();

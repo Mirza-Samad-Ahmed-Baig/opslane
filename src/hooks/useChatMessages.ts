@@ -30,6 +30,7 @@ interface UseChatMessagesReturn {
   isLoading: boolean;
   isSending: boolean;
   error: string | null;
+  streamingTimeout: boolean;
   sendMessage: (content: string, images?: ImageAttachment[]) => Promise<void>;
   clearError: () => void;
 }
@@ -64,9 +65,13 @@ export function useChatMessages({
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [streamingTimeout, setStreamingTimeout] = useState(false);
 
   // Use ref to avoid race condition with effect dependencies
   const previousMessageLengthRef = useRef(0);
+
+  // Track timeout for catastrophic failure detection
+  const timeoutIdRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Store all tool result blocks for cross-message matching
   const allToolResults = useRef<Map<string, { content: string; isError: boolean }>>(new Map());
@@ -234,6 +239,31 @@ export function useChatMessages({
       unlisten = await listen<StreamEvent>(eventChannel, (event) => {
         const streamEvent = event.payload;
 
+        // ✅ Reset activity timer on ANY event (text_delta, tool_use, tool_result)
+        // This prevents false timeouts during long-running operations
+        if (
+          streamEvent.type === 'text_delta' ||
+          streamEvent.type === 'tool_use' ||
+          streamEvent.type === 'tool_result'
+        ) {
+          // Clear existing timeout
+          if (timeoutIdRef.current) {
+            clearTimeout(timeoutIdRef.current);
+            timeoutIdRef.current = null;
+          }
+
+          // Reset timeout flag if it was set
+          setStreamingTimeout(false);
+
+          // Set new 10-minute catastrophic timeout
+          // Only triggers if backend actually crashes or becomes unresponsive
+          const CATASTROPHIC_TIMEOUT = 10 * 60 * 1000; // 10 minutes
+          timeoutIdRef.current = setTimeout(() => {
+            setStreamingTimeout(true);
+            console.error('[useChatMessages] Catastrophic timeout - no activity for 10 minutes');
+          }, CATASTROPHIC_TIMEOUT);
+        }
+
         switch (streamEvent.type) {
           case 'text_delta': {
             // Parse JSONL content from streaming event
@@ -311,6 +341,20 @@ export function useChatMessages({
             break;
           }
 
+          case 'tool_use': {
+            // ✅ Tool execution started - log for debugging
+            console.log(`[Tool] ${streamEvent.tool_name} started`);
+            break;
+          }
+
+          case 'tool_result': {
+            // ✅ Tool execution completed - log for debugging
+            console.log(
+              `[Tool] completed: ${streamEvent.success ? 'success' : 'failure'} (${streamEvent.tool_name})`
+            );
+            break;
+          }
+
           case 'complete': {
             // Mark all streaming messages as complete
             setMessages((prev) =>
@@ -347,6 +391,11 @@ export function useChatMessages({
     return () => {
       if (unlisten) {
         unlisten();
+      }
+      // Cleanup timeout on unmount
+      if (timeoutIdRef.current) {
+        clearTimeout(timeoutIdRef.current);
+        timeoutIdRef.current = null;
       }
     };
   }, [sessionId, transformMessage, onStreamComplete, onError]);
@@ -427,6 +476,7 @@ export function useChatMessages({
     isLoading,
     isSending,
     error,
+    streamingTimeout,
     sendMessage,
     clearError,
   };
