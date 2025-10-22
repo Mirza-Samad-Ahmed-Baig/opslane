@@ -123,6 +123,7 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
     }, 60000); // 60 second timeout
 
     return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isWaitingForClaudeResponse]);
 
   // Virtual scrolling (enabled for >50 messages per Performance Budget)

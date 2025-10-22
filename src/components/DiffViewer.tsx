@@ -2,7 +2,7 @@ import { useState, useMemo, memo } from 'react';
 import { FileText, ChevronDown, ChevronRight, Plus, Minus } from 'lucide-react';
 import { useSessionChanges } from '@/hooks/useSessionChanges';
 import { cn } from '@/lib/utils';
-import ReactDiffViewer from 'react-diff-viewer-continued';
+import ReactDiffViewer, { DiffMethod } from 'react-diff-viewer-continued';
 import { parseDiff } from '@/lib/diffParser';
 import { useTheme } from 'next-themes';
 
@@ -89,7 +89,7 @@ const FileDiffView = memo(
         hideLineNumbers={false}
         showDiffOnly={true}
         disableWordDiff={true}
-        compareMethod="diffLines"
+        compareMethod={DiffMethod.LINES}
         styles={diffViewerStyles}
       />
     );
