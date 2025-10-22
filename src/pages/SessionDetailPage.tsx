@@ -170,6 +170,19 @@ export function SessionDetailPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [navigate]);
 
+  // Clean up React Query cache when navigating away from this session
+  // This is part of a two-pronged defense-in-depth approach:
+  // 1. Component-level cleanup (here): Remove queries on unmount
+  // 2. Hook-level invalidation (useSessionChanges): Invalidate on sessionId change
+  useEffect(() => {
+    return () => {
+      // Remove both session and changes queries to ensure complete cache isolation
+      // and prevent stale data from one session appearing in another
+      queryClient.removeQueries({ queryKey: ['changes', id] });
+      queryClient.removeQueries({ queryKey: ['session', id] });
+    };
+  }, [id, queryClient]);
+
   // Loading state (Design Principle #2: Instant Feedback)
   if (isLoading) {
     return (
