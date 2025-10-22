@@ -1250,9 +1250,13 @@ impl SessionManager {
             .exec_command_blocking(container_id, cmd, None, false)
             .await?;
 
-        // Decode base64 content
+        // Decode base64 content (remove all whitespace including newlines)
+        let cleaned = encoded_content
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>();
         let content = STANDARD
-            .decode(encoded_content.trim())
+            .decode(cleaned)
             .map_err(|e| anyhow!("Failed to decode file content: {e}"))?;
 
         let size = content.len() as u64;
