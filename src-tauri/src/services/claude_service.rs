@@ -95,6 +95,10 @@ pub struct UsageInfo {
     pub cache_read_input_tokens: Option<i64>,
 }
 
+/// Claude projects directory path inside Docker containers
+/// Working directory /workspace/repo becomes -workspace-repo in Claude's sanitized path format
+const CLAUDE_PROJECTS_DIR: &str = "/home/claude/.claude/projects/-workspace-repo";
+
 /// Service for managing Claude Code interactions within Docker containers
 pub struct ClaudeService {
     docker: Arc<DockerService>,
@@ -212,38 +216,96 @@ impl ClaudeService {
         // Phase 1: If container isn't ready yet (background setup still running),
         // return empty array instead of error. The optimistic message will be shown
         // from the DB (session.initial_message) until the container is ready.
-        let container_id = match session.container_id {
-            Some(id) => id,
+        let container_id = match &session.container_id {
+            Some(id) => id.clone(),
             None => {
                 log::debug!("Session {session_id} has no container yet (setup in progress), returning empty history");
                 return Ok(Vec::new());
             }
         };
 
-        // Claude stores sessions at: ~/.claude/projects/{sanitized-cwd}/{uuid}.jsonl
+        // Claude stores sessions at: ~/.claude/projects/{sanitized-cwd}/{session_id}.jsonl
         // Working directory is /workspace/repo, which becomes -workspace-repo
-        // Find the most recent .jsonl file in that directory
-        let projects_dir = "/home/claude/.claude/projects/-workspace-repo";
+        let projects_dir = CLAUDE_PROJECTS_DIR;
 
-        // List all .jsonl files, sorted by modification time (newest first)
-        let cmd = vec![
-            "sh".to_string(),
-            "-c".to_string(),
-            format!("ls -t {}/*.jsonl 2>/dev/null | head -1", projects_dir),
-        ];
+        log::debug!(
+            "Session {} has claude_session_id: {:?}, container_id: {:?}",
+            session_id,
+            session.claude_session_id,
+            session.container_id
+        );
 
-        let latest_file = self
-            .docker
-            .exec_command_blocking(&container_id, cmd, None, false)
-            .await
-            .map_err(|e| anyhow!("Failed to find session file in {projects_dir}: {e}"))?;
+        // Use the stored claude_session_id to construct exact filename
+        // If claude_session_id is not set yet (first message in new session),
+        // fall back to selecting the most recent file (same as before)
+        let session_file_path = if let Some(ref claude_session_id) = session.claude_session_id {
+            // Security: Validate session ID doesn't contain path traversal characters
+            // This is defense-in-depth since session ID comes from database (trusted source)
+            if claude_session_id.contains("..") || claude_session_id.contains("/") {
+                log::error!(
+                    "Invalid claude_session_id contains path traversal characters: {claude_session_id}, falling back to most recent"
+                );
+                self.find_most_recent_session_file(&container_id, projects_dir)
+                    .await?
+            } else {
+                // Construct exact path using known session ID
+                let exact_path = format!("{projects_dir}/{claude_session_id}.jsonl");
 
-        let session_file_path = latest_file.trim();
+                log::debug!("Using stored claude_session_id to find session file: {exact_path}");
+
+                // Verify file exists
+                let cmd = vec![
+                    "sh".to_string(),
+                    "-c".to_string(),
+                    format!("test -f {exact_path} && echo {exact_path}"),
+                ];
+
+                match self
+                    .docker
+                    .exec_command_blocking(&container_id, cmd, None, false)
+                    .await
+                {
+                    Ok(path) if !path.trim().is_empty() => {
+                        log::info!(
+                        "✓ Using exact session file path for session {session_id} (claude_session_id: {claude_session_id})"
+                    );
+                        path.trim().to_string()
+                    }
+                    Ok(_) => {
+                        log::warn!(
+                            "Session file {exact_path} does not exist, falling back to most recent"
+                        );
+                        // Fallback to most recent file
+                        self.find_most_recent_session_file(&container_id, projects_dir)
+                            .await?
+                    }
+                    Err(e) => {
+                        log::warn!(
+                        "Failed to check for session file {exact_path}: {e}, falling back to most recent"
+                    );
+                        // Fallback to most recent file
+                        self.find_most_recent_session_file(&container_id, projects_dir)
+                            .await?
+                    }
+                }
+            }
+        } else {
+            // No claude_session_id stored yet (first message in new session)
+            // Use most recent file (same as original behavior)
+            log::warn!(
+                "⚠ Falling back to most recent file for session {session_id} (claude_session_id not set)"
+            );
+            self.find_most_recent_session_file(&container_id, projects_dir)
+                .await?
+        };
 
         if session_file_path.is_empty() {
             // No session file yet - return empty vector
+            log::debug!("No session file found for session {session_id}");
             return Ok(Vec::new());
         }
+
+        log::info!("Reading message history from {session_file_path} for session {session_id}");
 
         // Read the session file
         let cmd = vec!["cat".to_string(), session_file_path.to_string()];
@@ -278,8 +340,10 @@ impl ClaudeService {
 
         let duration = start.elapsed();
         log::info!(
-            "Parsed {} messages in {:?} (<10ms target)",
+            "✓ Successfully read {} messages from {} for session {} (parsed in {:?})",
             messages.len(),
+            session_file_path,
+            session_id,
             duration
         );
 
@@ -292,6 +356,37 @@ impl ClaudeService {
         }
 
         Ok(messages)
+    }
+
+    /// Find the most recent session file in a directory
+    ///
+    /// This is used as a fallback when claude_session_id is not yet available
+    /// (i.e., during the first message in a new session before we've extracted it)
+    ///
+    /// # Arguments
+    /// * `container_id` - Container ID to execute command in
+    /// * `projects_dir` - Directory containing session JSONL files
+    ///
+    /// # Returns
+    /// Path to the most recent .jsonl file, or empty string if none found
+    async fn find_most_recent_session_file(
+        &self,
+        container_id: &str,
+        projects_dir: &str,
+    ) -> Result<String> {
+        let cmd = vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            format!("ls -t {}/*.jsonl 2>/dev/null | head -1", projects_dir),
+        ];
+
+        let output = self
+            .docker
+            .exec_command_blocking(container_id, cmd, None, false)
+            .await
+            .map_err(|e| anyhow!("Failed to list session files in {projects_dir}: {e}"))?;
+
+        Ok(output.trim().to_string())
     }
 
     /// Parse a single JSONL line into a ParsedMessage
