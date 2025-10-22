@@ -6,6 +6,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { markdownComponents } from '@/components/ui/markdown';
 
 interface ChatMessageProps {
   message: DisplayMessage;
@@ -149,14 +150,24 @@ export function ChatMessage({ message }: ChatMessageProps) {
       </div>
 
       {/* Content */}
-      <div className="flex-1 space-y-2">
+      <div className="flex-1">
         {/* Text content */}
         {message.text && message.text.trim().length > 0 && (
-          <div className="prose prose-sm dark:prose-invert max-w-none">
+          <div
+            className={cn(
+              'prose prose-base dark:prose-invert max-w-none',
+              // Remove internal spacing - components handle it
+              '[&>*:first-child]:mt-0 [&>*:last-child]:mb-0'
+            )}
+          >
             {isUser ? (
-              <p className="text-sm">{message.text}</p>
+              // User messages stay as plain text but with better typography
+              <p className="text-base leading-relaxed mb-0">{message.text}</p>
             ) : (
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>
+              // Assistant messages get full markdown rendering
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                {message.text}
+              </ReactMarkdown>
             )}
           </div>
         )}
