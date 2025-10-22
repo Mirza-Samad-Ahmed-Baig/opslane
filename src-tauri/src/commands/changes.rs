@@ -68,9 +68,126 @@ pub async fn get_session_changes(
             _ => "modified",
         };
 
-        // TODO: Re-enable git diff when we need detailed change information
-        // For now, skip diff to reduce log noise
-        let diff = String::new();
+        // Generate diff based on file status
+        let diff = match status {
+            "added" => {
+                // For added files, show entire content as additions
+                let git_diff_result = state
+                    .docker
+                    .exec_command_blocking(
+                        &container_id,
+                        vec![
+                            "git".to_string(),
+                            "diff".to_string(),
+                            "--no-index".to_string(),
+                            "/dev/null".to_string(),
+                            path.to_string(),
+                        ],
+                        Some("/workspace/repo".to_string()),
+                        false,
+                    )
+                    .await;
+
+                match git_diff_result {
+                    Ok(diff) => diff,
+                    Err(_) => {
+                        // Fallback: cat the file and format as additions
+                        state
+                            .docker
+                            .exec_command_blocking(
+                                &container_id,
+                                vec!["cat".to_string(), path.to_string()],
+                                Some("/workspace/repo".to_string()),
+                                false,
+                            )
+                            .await
+                            .map(|content| {
+                                format!(
+                                    "--- /dev/null\n+++ b/{}\n{}",
+                                    path,
+                                    content
+                                        .lines()
+                                        .map(|line| format!("+{line}"))
+                                        .collect::<Vec<_>>()
+                                        .join("\n")
+                                )
+                            })
+                            .unwrap_or_default()
+                    }
+                }
+            }
+            "deleted" => {
+                // For deleted files, show previous content as deletions
+                state
+                    .docker
+                    .exec_command_blocking(
+                        &container_id,
+                        vec![
+                            "git".to_string(),
+                            "show".to_string(),
+                            format!("HEAD:{}", path),
+                        ],
+                        Some("/workspace/repo".to_string()),
+                        false,
+                    )
+                    .await
+                    .map(|content| {
+                        format!(
+                            "--- a/{}\n+++ /dev/null\n{}",
+                            path,
+                            content
+                                .lines()
+                                .map(|line| format!("-{line}"))
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        )
+                    })
+                    .unwrap_or_default()
+            }
+            _ => {
+                // For modified files, get unified diff
+                state
+                    .docker
+                    .exec_command_blocking(
+                        &container_id,
+                        vec![
+                            "git".to_string(),
+                            "diff".to_string(),
+                            "HEAD".to_string(),
+                            "--".to_string(),
+                            path.to_string(),
+                        ],
+                        Some("/workspace/repo".to_string()),
+                        false,
+                    )
+                    .await
+                    .unwrap_or_default()
+            }
+        };
+
+        // Check if file is binary
+        let is_binary = diff.contains("Binary files") || diff.is_empty() && status == "modified";
+
+        // Limit diff size to prevent memory issues (max 1MB or 10000 lines)
+        const MAX_DIFF_SIZE: usize = 1_000_000; // 1MB
+        const MAX_DIFF_LINES: usize = 10_000;
+
+        let diff = if is_binary {
+            format!("Binary file {path} changed")
+        } else if diff.len() > MAX_DIFF_SIZE {
+            format!(
+                "Diff too large to display ({:.1} MB). File: {}",
+                diff.len() as f64 / 1_000_000.0,
+                path
+            )
+        } else {
+            let line_count = diff.lines().count();
+            if line_count > MAX_DIFF_LINES {
+                format!("Diff too large to display ({line_count} lines). File: {path}")
+            } else {
+                diff
+            }
+        };
 
         // Count additions/deletions from diff
         let mut additions = 0;
