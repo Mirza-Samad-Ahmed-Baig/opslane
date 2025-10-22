@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo, useState } from 'react';
+import { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useChatMessages } from '@/hooks/useChatMessages';
 import { useMessageGrouping } from '@/hooks/useMessageGrouping';
@@ -10,6 +10,18 @@ import { TypingIndicator } from '@/components/chat/TypingIndicator';
 import { SessionSetupProgress } from '@/components/SessionSetupProgress';
 import { Loader2, X, AlertCircle, ChevronsDown, ChevronsUp } from 'lucide-react';
 import type { DisplayMessage } from '@/types/messages';
+
+// Virtual scrolling height estimation constants
+const BASE_MESSAGE_HEIGHT = 80; // Base height for a message
+const CHARS_PER_LINE = 80; // Estimated characters per line of text
+const LINE_HEIGHT = 20; // Height per line of text
+const MAX_TEXT_HEIGHT = 300; // Maximum height for text content
+const MESSAGE_MARGIN = 16; // Bottom margin for messages
+const SINGLE_TOOL_HEIGHT = 130; // Height for a single tool (average of collapsed/expanded)
+const TOOL_GROUP_HEADER_HEIGHT = 60; // Height for tool group header
+const TOOL_ITEM_HEIGHT = 60; // Height per tool item in a group
+const DEFAULT_FALLBACK_HEIGHT = 150; // Fallback height when group is undefined
+const VIRTUAL_SCROLL_OVERSCAN = 10; // Number of items to render outside viewport
 
 interface MessagePanelProps {
   sessionId: string;
@@ -49,6 +61,32 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
   // Phase 3: Collapse state management
   const collapseState = useCollapseState(sessionId);
 
+  // Helper function to calculate estimated height for a message group
+  // Used by virtualizer.estimateSize for better initial estimates
+  const getGroupEstimatedHeight = useCallback((group: (typeof messageGroups)[number]): number => {
+    if (group.type === 'message') {
+      const message = group.message!;
+      let height = BASE_MESSAGE_HEIGHT;
+
+      if (message.text) {
+        const lines = Math.ceil(message.text.length / CHARS_PER_LINE);
+        height += Math.min(lines * LINE_HEIGHT, MAX_TEXT_HEIGHT);
+      }
+
+      height += MESSAGE_MARGIN;
+      return height;
+    } else {
+      // Tool group height estimation
+      const toolCount = group.tools!.length;
+
+      if (toolCount === 1) {
+        return SINGLE_TOOL_HEIGHT;
+      } else {
+        return TOOL_GROUP_HEADER_HEIGHT + toolCount * TOOL_ITEM_HEIGHT;
+      }
+    }
+  }, []);
+
   // Phase 1: Detect when we're waiting for Claude's initial response
   // This happens when:
   // 1. We have an optimistic message (user's message from DB)
@@ -76,7 +114,12 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
 
     const timeoutId = setTimeout(() => {
       setWaitingTimeout(true);
-      console.warn('[MessagePanel] Timeout waiting for Claude response');
+      console.warn('[MessagePanel] Timeout waiting for Claude response', {
+        sessionId,
+        messageCount: displayMessages.length,
+        hasOptimisticMessage: !!optimisticMessage,
+        isSettingUp,
+      });
     }, 60000); // 60 second timeout
 
     return () => clearTimeout(timeoutId);
@@ -88,37 +131,26 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
     getScrollElement: () => parentRef.current,
     estimateSize: (index) => {
       const group = messageGroups[index];
-      if (!group) return 100;
-
-      if (group.type === 'message') {
-        // Message height estimation (existing logic)
-        const message = group.message!;
-        let height = 80; // Base height
-
-        if (message.text) {
-          const lines = Math.ceil(message.text.length / 80);
-          height += Math.min(lines * 20, 300);
-        }
-
-        // Note: Tools are now in separate groups, not counted here
-
-        height += 16; // margin
-        return height;
-      } else {
-        // Tool group height estimation
-        const toolCount = group.tools!.length;
-
-        if (toolCount === 1) {
-          // Single tool: ~60px collapsed, ~200px expanded (average)
-          return 130;
-        } else {
-          // Multiple tools: group header (60px) + tools (60px each collapsed)
-          return 60 + toolCount * 60;
-        }
-      }
+      if (!group) return DEFAULT_FALLBACK_HEIGHT;
+      return getGroupEstimatedHeight(group);
     },
-    overscan: 5, // Render 5 extra items above/below viewport
+    overscan: VIRTUAL_SCROLL_OVERSCAN,
     enabled: messageGroups.length > 50, // Only virtualize for performance-critical lists
+    // Allow virtualizer to measure actual heights dynamically for accurate positioning
+    // Uses feature detection instead of browser sniffing for better reliability
+    measureElement:
+      typeof window !== 'undefined'
+        ? (element) => {
+            try {
+              const height = element?.getBoundingClientRect().height;
+              return height ?? DEFAULT_FALLBACK_HEIGHT;
+            } catch (error) {
+              // Fallback gracefully if measurement fails (e.g., in some Firefox versions)
+              console.warn('[MessagePanel] measureElement failed, using fallback height:', error);
+              return DEFAULT_FALLBACK_HEIGHT;
+            }
+          }
+        : undefined,
   });
 
   // Track if user is at bottom (for Calm Technology: don't interrupt scrolling)
@@ -243,6 +275,15 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
                   <div
                     key={group.id}
                     data-index={virtualRow.index}
+                    ref={(el) => {
+                      if (el) {
+                        try {
+                          virtualizer.measureElement(el);
+                        } catch (error) {
+                          console.warn('[MessagePanel] Failed to measure element:', error);
+                        }
+                      }
+                    }}
                     style={{
                       position: 'absolute',
                       top: 0,
