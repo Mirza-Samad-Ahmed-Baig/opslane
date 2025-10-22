@@ -15,3 +15,34 @@ import { twMerge } from 'tailwind-merge';
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+
+/**
+ * Filters out HTML event props that conflict with framer-motion
+ * This is necessary because HTML event handlers have different type signatures
+ * than framer-motion's event handlers
+ */
+export function filterMotionProps<T extends Record<string, unknown>>(props: T) {
+  const {
+    onDrag,
+    onDragStart,
+    onDragEnd,
+    onDragEnter,
+    onDragLeave,
+    onDragOver,
+    onAnimationStart,
+    onAnimationEnd,
+    ...safeProps
+  } = props;
+
+  // Explicitly void to satisfy ESLint no-unused-vars
+  void onDrag;
+  void onDragStart;
+  void onDragEnd;
+  void onDragEnter;
+  void onDragLeave;
+  void onDragOver;
+  void onAnimationStart;
+  void onAnimationEnd;
+
+  return safeProps;
+}

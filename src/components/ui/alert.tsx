@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
-import { AlertCircle, Info, CheckCircle, XCircle } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { AlertCircle, Info, CheckCircle, XCircle, X } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { cn, filterMotionProps } from '@/lib/utils';
 
 const alertVariants = cva('flex items-start gap-3 p-3 rounded-md border text-sm', {
   variants: {
@@ -29,6 +30,8 @@ export interface AlertProps
     VariantProps<typeof alertVariants> {
   icon?: React.ComponentType<{ className?: string }>;
   title?: string;
+  dismissible?: boolean;
+  onDismiss?: () => void;
 }
 
 /**
@@ -37,6 +40,8 @@ export interface AlertProps
  * @param variant - Alert type: info (blue), warning (yellow), success (green), error (red)
  * @param icon - Custom icon component (defaults to variant-specific icon)
  * @param title - Optional bold title text
+ * @param dismissible - Shows dismiss (X) button
+ * @param onDismiss - Callback when dismissed
  * @param children - Alert content
  *
  * Features:
@@ -44,19 +49,52 @@ export interface AlertProps
  * - Semantic variants with appropriate icons
  * - Accessible with proper color contrast
  * - Optional title for structured content
+ * - Dismissible with Framer Motion animation (200ms)
+ * - Calm Technology compliant (subtle fade-out)
  */
 const Alert = React.forwardRef<HTMLDivElement, AlertProps>(
-  ({ className, variant = 'info', icon, title, children, ...props }, ref) => {
+  (
+    { className, variant = 'info', icon, title, children, dismissible, onDismiss, ...props },
+    ref
+  ) => {
+    const [isVisible, setIsVisible] = React.useState(true);
     const Icon = icon || alertIconMap[variant || 'info'];
 
+    const handleDismiss = () => {
+      setIsVisible(false);
+      setTimeout(() => onDismiss?.(), 200); // Wait for exit animation
+    };
+
     return (
-      <div ref={ref} role="alert" className={cn(alertVariants({ variant }), className)} {...props}>
-        <Icon className="h-5 w-5 mt-0.5 flex-shrink-0" aria-hidden="true" />
-        <div className="flex-1">
-          {title && <p className="font-medium mb-1">{title}</p>}
-          <div>{children}</div>
-        </div>
-      </div>
+      <AnimatePresence>
+        {isVisible && (
+          <motion.div
+            ref={ref}
+            role="alert"
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, x: 20 }}
+            transition={{ duration: 0.2 }}
+            className={cn(alertVariants({ variant }), className)}
+            {...filterMotionProps(props)}
+          >
+            <Icon className="h-5 w-5 mt-0.5 flex-shrink-0" aria-hidden="true" />
+            <div className="flex-1">
+              {title && <p className="font-medium mb-1">{title}</p>}
+              <div>{children}</div>
+            </div>
+            {dismissible && (
+              <button
+                onClick={handleDismiss}
+                className="flex-shrink-0 rounded-md p-1 hover:bg-black/10 dark:hover:bg-white/10 transition-colors focus-standard"
+                aria-label="Dismiss alert"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     );
   }
 );

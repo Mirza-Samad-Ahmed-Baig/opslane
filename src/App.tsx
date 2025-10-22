@@ -6,6 +6,7 @@ import { listen } from '@tauri-apps/api/event';
 import { Palette, FolderOpen, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
+import { Toaster } from '@/components/ui/toaster';
 import {
   Select,
   SelectContent,
@@ -355,6 +356,7 @@ function App() {
           <Route path="/showcase" element={<ComponentShowcase />} />
         </Routes>
       </BrowserRouter>
+      <Toaster />
     </QueryClientProvider>
   );
 }
