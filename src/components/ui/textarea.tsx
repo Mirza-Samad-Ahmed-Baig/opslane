@@ -10,7 +10,7 @@ const textareaVariants = cva(
         default:
           'border border-input bg-muted/40 hover:bg-muted/60 focus-visible:bg-background focus-visible:border-foreground/40',
         filled:
-          'border-0 bg-muted hover:bg-muted/80 focus-visible:bg-muted/60 focus-visible:ring-ring/40',
+          'border-0 bg-transparent hover:bg-transparent focus-visible:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0',
       },
       size: {
         sm: 'min-h-[60px] px-2 py-1 text-xs',
