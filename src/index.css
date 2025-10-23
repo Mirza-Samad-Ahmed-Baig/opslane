@@ -208,7 +208,7 @@ body {
   }
 }
 
-/* Calm message entrance animation (200ms fade-in) */
+/* Calm message entrance animation (100ms fade-in) */
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -221,7 +221,7 @@ body {
 }
 
 .animate-fadeIn {
-  animation: fadeIn 200ms ease-out;
+  animation: fadeIn 100ms ease-out;
 }
 
 /* Custom markdown/prose enhancements */

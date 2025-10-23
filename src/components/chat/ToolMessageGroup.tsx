@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, memo } from 'react';
 import { ChevronRight, Package } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ToolExecution } from '@/types/messages';
@@ -20,7 +20,7 @@ interface ToolMessageGroupProps {
  * - Single tool: Render directly without group wrapper
  * - Multiple tools: Show group header with summary
  */
-export function ToolMessageGroup({
+export const ToolMessageGroup = memo(function ToolMessageGroup({
   tools,
   messageId,
   isGroupCollapsed,
@@ -118,4 +118,4 @@ export function ToolMessageGroup({
       )}
     </div>
   );
-}
+});
