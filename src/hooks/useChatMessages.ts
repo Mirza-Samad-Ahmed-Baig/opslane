@@ -31,7 +31,7 @@ interface UseChatMessagesReturn {
   isSending: boolean;
   error: string | null;
   streamingTimeout: boolean;
-  sendMessage: (content: string, images?: ImageAttachment[]) => Promise<void>;
+  sendMessage: (content: string, images?: ImageAttachment[], model?: string) => Promise<void>;
   clearError: () => void;
 }
 
@@ -402,7 +402,7 @@ export function useChatMessages({
 
   // Send message function
   const sendMessage = useCallback(
-    async (content: string, images?: ImageAttachment[]) => {
+    async (content: string, images?: ImageAttachment[], model?: string) => {
       // Validate input
       if (isSending) return;
 
@@ -451,6 +451,7 @@ export function useChatMessages({
         await invoke('send_message', {
           sessionId,
           contentBlocks,
+          model,
         });
 
         // Mark user message as sent

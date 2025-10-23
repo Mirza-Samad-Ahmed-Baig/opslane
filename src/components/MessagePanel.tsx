@@ -10,7 +10,14 @@ import { ChatInput } from '@/components/chat/ChatInput';
 import { TypingIndicator } from '@/components/chat/TypingIndicator';
 import { SessionSetupProgress } from '@/components/SessionSetupProgress';
 import { Loader2, X, AlertCircle, ChevronsDown, ChevronsUp } from 'lucide-react';
-import type { DisplayMessage } from '@/types/messages';
+import type { DisplayMessage, ImageAttachment } from '@/types/messages';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 // Virtual scrolling height estimation constants
 const BASE_MESSAGE_HEIGHT = 80; // Base height for a message
@@ -164,6 +171,9 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
   const isAtBottomRef = useRef(true);
   const heightCacheRef = useRef<Map<string, number>>(loadHeightCache(sessionId));
   const [autoLoadTriggered, setAutoLoadTriggered] = useState(false);
+
+  // Model selection state - default to sonnet
+  const [selectedModel, setSelectedModel] = useState<string>('sonnet');
 
   const { messages, isLoading, isSending, error, streamingTimeout, sendMessage, clearError } =
     useChatMessages({
@@ -376,6 +386,28 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
       });
     }
   }, [visibleMessages.length, displayMessages.length, isLoading]);
+
+  // Model selector component
+  const modelSelector = (
+    <Select value={selectedModel} onValueChange={setSelectedModel}>
+      <SelectTrigger className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-muted/50 rounded-md border border-border/50 text-sm h-auto w-auto transition-all duration-150 hover:bg-muted/70 hover:border-border hover:scale-[1.02]">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="sonnet">Sonnet</SelectItem>
+        <SelectItem value="opus">Opus</SelectItem>
+        <SelectItem value="haiku">Haiku</SelectItem>
+      </SelectContent>
+    </Select>
+  );
+
+  // Wrapper to include model in sendMessage calls
+  const sendMessageWithModel = useCallback(
+    async (content: string, images?: ImageAttachment[]) => {
+      await sendMessage(content, images, selectedModel);
+    },
+    [sendMessage, selectedModel]
+  );
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -613,7 +645,7 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
       {/* Chat input */}
       <ChatInput
         sessionId={sessionId}
-        onSend={sendMessage}
+        onSend={sendMessageWithModel}
         disabled={
           isSending ||
           isLoading ||
@@ -630,6 +662,7 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
                 ? 'Timed out - try sending a new message'
                 : 'Ask Claude to help with your code...'
         }
+        modelControl={modelSelector}
       />
     </div>
   );

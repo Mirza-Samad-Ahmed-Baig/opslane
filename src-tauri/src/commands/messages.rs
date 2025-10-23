@@ -107,6 +107,7 @@ fn validate_base64_data(data: &str) -> bool {
 /// # Arguments
 /// * `session_id` - The session ID
 /// * `content_blocks` - The message content blocks (text and/or images)
+/// * `model` - Optional model to use (e.g., "sonnet", "opus", "haiku")
 ///
 /// # Returns
 /// Returns immediately after starting the stream. Listen for events to get the response.
@@ -114,6 +115,7 @@ fn validate_base64_data(data: &str) -> bool {
 pub async fn send_message(
     session_id: String,
     content_blocks: Vec<ContentBlockInput>,
+    model: Option<String>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
@@ -164,7 +166,7 @@ pub async fn send_message(
     // Start streaming from ClaudeService
     let mut rx = state
         .claude_service
-        .send_message(&session_id, content)
+        .send_message(&session_id, content, model)
         .await
         .map_err(|e| {
             log::error!("Failed to send message: {e}");

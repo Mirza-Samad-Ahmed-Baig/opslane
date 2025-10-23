@@ -116,6 +116,7 @@ impl ClaudeService {
     /// # Arguments
     /// * `session_id` - The session ID
     /// * `message` - The message content to send to Claude
+    /// * `model` - Optional model to use (e.g., "sonnet", "opus", "haiku")
     ///
     /// # Returns
     /// Returns a receiver that streams `StreamEvent`s as they occur
@@ -123,6 +124,7 @@ impl ClaudeService {
         &self,
         session_id: &str,
         message: String,
+        model: Option<String>,
     ) -> Result<mpsc::Receiver<StreamEvent>> {
         // SECURITY: Validate message size to prevent resource exhaustion
         const MAX_MESSAGE_SIZE: usize = 1024 * 1024; // 1MB limit
@@ -165,6 +167,12 @@ impl ClaudeService {
             cmd.extend_from_slice(&["--resume".to_string(), claude_session_id.clone()]);
         } else {
             log::info!("Starting new Claude session for Opslane session {session_id}");
+        }
+
+        // Add model flag if specified
+        if let Some(model_name) = model {
+            log::info!("Using model: {model_name}");
+            cmd.extend_from_slice(&["--model".to_string(), model_name]);
         }
 
         // Add common flags

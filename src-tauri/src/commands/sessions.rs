@@ -104,7 +104,10 @@ pub async fn create_session(
                 message.len()
             );
 
-            match claude_service.send_message(&session_id, message).await {
+            match claude_service
+                .send_message(&session_id, message, None)
+                .await
+            {
                 Ok(mut receiver) => {
                     // ✅ CRITICAL FIX: Forward ALL stream events to frontend
                     // Previously we were draining events without forwarding them
