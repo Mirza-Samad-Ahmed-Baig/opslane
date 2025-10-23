@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, Link, useNavigate } from 'react-router-do
 import { QueryClientProvider } from '@tanstack/react-query';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
-import { Palette, FolderOpen, Loader2 } from 'lucide-react';
+import { Palette } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
 import { Toaster } from '@/components/ui/toaster';
@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/select';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { SessionList } from '@/components/SessionList';
+import { CompactRepositoryBadge } from '@/components/CompactRepositoryBadge';
 import { ComponentShowcase } from '@/pages/ComponentShowcase';
 import { SessionDetailPage } from '@/pages/SessionDetailPage';
 import { queryClient } from '@/lib/query-client';
@@ -29,6 +30,7 @@ import './App.css';
 function HomePage() {
   const navigate = useNavigate();
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [selectedModel, setSelectedModel] = useState<string>('sonnet');
   const [error, setError] = useState<string | null>(null);
   const [isBrowsing, setIsBrowsing] = useState(false);
   const { data: dockerAvailable } = useDockerStatus();
@@ -156,11 +158,6 @@ function HomePage() {
     setError(null);
   };
 
-  // Clear selection (go back to selector)
-  const handleClearSelection = () => {
-    setSelectedProject(null);
-  };
-
   // Simple event listener for logging progress events
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -222,12 +219,12 @@ function HomePage() {
         {/* Center Panel - Quick-start input */}
         <div className="flex-1 flex items-center justify-center bg-background">
           {/* Quick-start Input Form */}
-          <div className="w-full max-w-4xl px-4 sm:px-8">
+          <div className="w-full max-w-3xl px-4 sm:px-8">
             <h2
               id="quickstart-heading"
-              className="text-2xl sm:text-3xl font-semibold text-center mb-6 sm:mb-8"
+              className="text-xl font-medium text-foreground/90 text-center mb-8 animate-fadeIn"
             >
-              What are we coding next?
+              What would you like to build?
             </h2>
 
             {/* Error Alert */}
@@ -245,97 +242,42 @@ function HomePage() {
               </Alert>
             )}
 
-            {/* Repository/Model Selection Bar */}
-            <div className="border-2 rounded-t-xl bg-muted/30 px-4 sm:px-6 py-3 sm:py-4 flex flex-wrap items-center gap-2 sm:gap-3">
-              {/* Repository Selector */}
-              {!selectedProject ? (
-                <Select
-                  value=""
-                  onValueChange={(value) => {
-                    if (value === '__browse__') {
-                      handleBrowseFolder();
-                    } else if (value) {
-                      const project = projects?.find((p) => p.id === value);
-                      if (project) {
-                        handleProjectSelect(project);
-                      }
-                    }
-                  }}
-                  disabled={isBrowsing || getOrCreateProject.isPending}
-                >
-                  <SelectTrigger className="w-full sm:flex-1">
-                    <SelectValue
-                      placeholder={isBrowsing ? 'Browsing...' : 'Select a repository...'}
-                    />
+            {/* Chat Input with inline controls */}
+            <ChatInput
+              sessionId={undefined} // No session yet for quick start
+              onSend={handleQuickStart}
+              disabled={!selectedProject || !dockerAvailable || isCreating}
+              isSending={isCreating}
+              placeholder={
+                !selectedProject
+                  ? 'Select a repository first...'
+                  : isCreating
+                    ? 'Creating session...'
+                    : 'Describe a task'
+              }
+              repositoryControl={
+                <CompactRepositoryBadge
+                  selectedProject={selectedProject}
+                  projects={projects}
+                  isBrowsing={isBrowsing}
+                  isPending={getOrCreateProject.isPending}
+                  onProjectSelect={handleProjectSelect}
+                  onBrowseFolder={handleBrowseFolder}
+                />
+              }
+              modelControl={
+                <Select value={selectedModel} onValueChange={setSelectedModel}>
+                  <SelectTrigger className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-muted/50 rounded-md border border-border/50 text-sm h-auto w-auto transition-all duration-150 hover:bg-muted/70 hover:border-border hover:scale-[1.02]">
+                    <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {projects && projects.length > 0 && (
-                      <>
-                        {projects.map((project) => (
-                          <SelectItem key={project.id} value={project.id}>
-                            {project.name}
-                          </SelectItem>
-                        ))}
-                        <SelectItem value="__separator__" disabled className="h-px bg-border my-1">
-                          {/* Separator */}
-                        </SelectItem>
-                      </>
-                    )}
-                    <SelectItem value="__browse__" disabled={isBrowsing}>
-                      {isBrowsing ? (
-                        <span className="flex items-center gap-2">
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                          Browsing...
-                        </span>
-                      ) : (
-                        'Browse for new project...'
-                      )}
-                    </SelectItem>
+                    <SelectItem value="sonnet">Sonnet</SelectItem>
+                    <SelectItem value="opus">Opus</SelectItem>
+                    <SelectItem value="haiku">Haiku</SelectItem>
                   </SelectContent>
                 </Select>
-              ) : (
-                <div className="w-full sm:flex-1 flex items-center gap-2 px-3 py-2 border border-input bg-muted/50 rounded-md h-9 transition-colors hover:bg-muted/70">
-                  <FolderOpen className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                  <span className="text-sm font-medium truncate flex-1">
-                    {selectedProject.name}
-                  </span>
-                  <button
-                    onClick={handleClearSelection}
-                    className="text-xs text-muted-foreground hover:text-foreground underline flex-shrink-0 transition-colors"
-                  >
-                    Change
-                  </button>
-                </div>
-              )}
-
-              {/* Model Selector */}
-              <Select defaultValue="sonnet">
-                <SelectTrigger className="w-full sm:w-[140px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="sonnet">Sonnet</SelectItem>
-                  <SelectItem value="opus">Opus</SelectItem>
-                  <SelectItem value="haiku">Haiku</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Chat Input with image support */}
-            <div className="border-2 border-t-0 rounded-b-xl overflow-hidden bg-background shadow-sm">
-              <ChatInput
-                sessionId={undefined} // No session yet for quick start
-                onSend={handleQuickStart}
-                disabled={!selectedProject || !dockerAvailable || isCreating}
-                placeholder={
-                  !selectedProject
-                    ? 'Select a repository first...'
-                    : isCreating
-                      ? 'Creating session...'
-                      : 'Describe a task'
-                }
-              />
-            </div>
+              }
+            />
           </div>
         </div>
       </div>

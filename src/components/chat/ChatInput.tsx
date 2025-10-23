@@ -1,8 +1,8 @@
 import { useState, useCallback, useRef } from 'react';
-import { Send, Loader2, X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { ArrowUp, Loader2, X } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { invoke } from '@tauri-apps/api/core';
+import { cn } from '@/lib/utils';
 import type { ImageAttachment, ImageMediaType } from '@/types/messages';
 
 interface SelectedImage {
@@ -18,10 +18,20 @@ interface ChatInputProps {
   onSend: (message: string, images?: ImageAttachment[]) => void;
   disabled?: boolean;
   placeholder?: string;
+  isSending?: boolean; // Track if we're actively sending (for spinner)
+  repositoryControl?: React.ReactNode; // Repository selector to render in bottom bar
+  modelControl?: React.ReactNode; // Model selector to render in bottom bar
 }
 
+// File upload constraints
 const ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'];
 const MAX_SIZE = 10 * 1024 * 1024; // 10MB
+
+// Textarea auto-expand configuration
+const LINE_HEIGHT = 24; // Line height in pixels (matches Inter font default)
+const PADDING_AND_BORDER = 16; // Total vertical padding
+const MIN_ROWS = 3;
+const MAX_ROWS = 10;
 
 // Type guard for Tauri file with path property
 interface TauriFile extends File {
@@ -47,11 +57,34 @@ export function ChatInput({
   onSend,
   disabled = false,
   placeholder = 'Type a message...',
+  isSending = false,
+  repositoryControl,
+  modelControl,
 }: ChatInputProps) {
   const [value, setValue] = useState('');
   const [selectedImages, setSelectedImages] = useState<SelectedImage[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [textareaHeight, setTextareaHeight] = useState<number>(MIN_ROWS);
+  const [announcement, setAnnouncement] = useState<string>(''); // For screen reader announcements
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-expand handler
+  const handleTextareaChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setValue(e.target.value);
+
+    // Auto-expand logic
+    const textarea = e.target;
+
+    // Reset height to get accurate scrollHeight
+    textarea.style.height = 'auto';
+    const contentHeight = textarea.scrollHeight;
+    const rows = Math.min(
+      MAX_ROWS,
+      Math.max(MIN_ROWS, Math.ceil((contentHeight - PADDING_AND_BORDER) / LINE_HEIGHT))
+    );
+
+    setTextareaHeight(rows);
+  }, []);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -95,15 +128,19 @@ export function ChatInput({
 
               const preview = URL.createObjectURL(file);
 
-              setSelectedImages((prev) => [
-                ...prev,
-                {
-                  file,
-                  preview,
-                  containerPath,
-                  mediaType: file.type,
-                },
-              ]);
+              setSelectedImages((prev) => {
+                const updated = [
+                  ...prev,
+                  {
+                    file,
+                    preview,
+                    containerPath,
+                    mediaType: file.type,
+                  },
+                ];
+                setAnnouncement(`Image ${file.name} added. ${updated.length} images attached.`);
+                return updated;
+              });
               continue;
             } catch (copyError) {
               console.error('[ChatInput] Failed to copy image to session:', copyError);
@@ -118,15 +155,19 @@ export function ChatInput({
           reader.onload = () => {
             const base64 = reader.result as string;
 
-            setSelectedImages((prev) => [
-              ...prev,
-              {
-                file,
-                preview,
-                base64,
-                mediaType: file.type,
-              },
-            ]);
+            setSelectedImages((prev) => {
+              const updated = [
+                ...prev,
+                {
+                  file,
+                  preview,
+                  base64,
+                  mediaType: file.type,
+                },
+              ];
+              setAnnouncement(`Image ${file.name} added. ${updated.length} images attached.`);
+              return updated;
+            });
           };
 
           reader.onerror = () => {
@@ -184,15 +225,19 @@ export function ChatInput({
       reader.onload = () => {
         const base64 = reader.result as string;
 
-        setSelectedImages((prev) => [
-          ...prev,
-          {
-            file,
-            preview,
-            base64,
-            mediaType: file.type,
-          },
-        ]);
+        setSelectedImages((prev) => {
+          const updated = [
+            ...prev,
+            {
+              file,
+              preview,
+              base64,
+              mediaType: file.type,
+            },
+          ];
+          setAnnouncement(`Image pasted. ${updated.length} images attached.`);
+          return updated;
+        });
       };
 
       reader.onerror = () => {
@@ -216,6 +261,9 @@ export function ChatInput({
         URL.revokeObjectURL(removed.preview); // Clean up object URL
       }
       updated.splice(index, 1);
+      setAnnouncement(
+        `Image ${removed?.file.name || ''} removed. ${updated.length} ${updated.length === 1 ? 'image' : 'images'} remaining.`
+      );
       return updated;
     });
   }, []);
@@ -242,10 +290,12 @@ export function ChatInput({
 
     onSend(value.trim(), images.length > 0 ? images : undefined);
     setValue('');
+    setTextareaHeight(MIN_ROWS); // Reset to minimum height
 
     // Clean up previews
     selectedImages.forEach((img) => URL.revokeObjectURL(img.preview));
     setSelectedImages([]);
+    setAnnouncement('Message sent.');
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -256,22 +306,66 @@ export function ChatInput({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="border-t p-4">
+    <form
+      onSubmit={handleSubmit}
+      className={cn(
+        'border rounded-xl overflow-hidden bg-background shadow-sm',
+        'transition-shadow duration-200 hover:shadow-md',
+        'focus-within:shadow-lg focus-within:border-primary/30',
+        isDragging && 'ring-2 ring-primary'
+      )}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* Main textarea area */}
+      <div className="p-4 pb-2">
+        <Textarea
+          ref={textareaRef}
+          value={value}
+          onChange={handleTextareaChange}
+          onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
+          placeholder={placeholder}
+          disabled={disabled}
+          variant="filled"
+          className="resize-none p-0 min-h-[120px]"
+          rows={textareaHeight}
+          autoFocus
+          aria-label="Chat message input"
+          aria-describedby="chat-input-hint"
+        />
+      </div>
+
       {/* Image Previews */}
       {selectedImages.length > 0 && (
-        <div className="flex gap-2 mb-2 flex-wrap">
+        <div
+          className="flex gap-2 px-4 pb-2 flex-wrap animate-fadeIn"
+          role="list"
+          aria-label="Attached images"
+        >
           {selectedImages.map((img, idx) => (
-            <div key={idx} className="relative group">
+            <div key={idx} className="relative group animate-scaleIn" role="listitem">
               <img
                 src={img.preview}
                 alt={img.file.name}
-                className="h-20 w-20 object-cover rounded border"
+                className="h-20 w-20 object-cover rounded border transition-all duration-150 hover:scale-105 hover:shadow-md"
               />
               <button
                 type="button"
                 onClick={() => handleRemoveImage(idx)}
-                className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                aria-label="Remove image"
+                onKeyDown={(e) => {
+                  if (e.key === 'Delete' || e.key === 'Backspace') {
+                    e.preventDefault();
+                    handleRemoveImage(idx);
+                  }
+                }}
+                className={cn(
+                  'absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full p-1',
+                  'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2'
+                )}
+                aria-label={`Remove image ${img.file.name}`}
               >
                 <X className="h-3 w-3" />
               </button>
@@ -280,41 +374,43 @@ export function ChatInput({
         </div>
       )}
 
-      <div
-        className={`flex gap-2 ${isDragging ? 'ring-2 ring-primary rounded-md' : ''}`}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-      >
-        <Textarea
-          ref={textareaRef}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          placeholder={placeholder}
-          disabled={disabled}
-          className="resize-none"
-          rows={3}
-          autoFocus
-          aria-label="Chat message input"
-          aria-describedby="chat-input-hint"
-        />
-        <Button
+      {/* Bottom controls bar */}
+      <div className="flex items-center gap-2 px-4 pb-4 pt-2 border-t border-border/20">
+        {/* Left side - Repository and Model controls */}
+        <div className="flex items-center gap-2 flex-1">
+          {repositoryControl}
+          {modelControl}
+        </div>
+
+        {/* Right side - Send button */}
+        <button
           type="submit"
           disabled={disabled || (!value.trim() && selectedImages.length === 0)}
-          size="icon"
-          className="self-end"
+          className={cn(
+            'inline-flex items-center justify-center gap-1.5 px-3 py-2',
+            'bg-primary text-primary-foreground rounded-lg',
+            'text-sm font-medium transition-all duration-150',
+            'hover:bg-primary/90 hover:scale-[1.02] active:scale-[0.98]',
+            'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2'
+          )}
           aria-label="Send message"
         >
-          {disabled ? (
+          {isSending ? (
             <Loader2 className="h-4 w-4 animate-spin" aria-label="Sending" />
           ) : (
-            <Send className="h-4 w-4" />
+            <ArrowUp className="h-4 w-4" />
           )}
-        </Button>
+        </button>
       </div>
-      <div id="chat-input-hint" className="text-xs text-muted-foreground mt-2">
+
+      {/* ARIA live region for screen reader announcements */}
+      <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {announcement}
+      </div>
+
+      {/* Screen reader hint */}
+      <div id="chat-input-hint" className="sr-only">
         Press Enter to send, Shift+Enter for new line. Drag images or paste from clipboard.
       </div>
     </form>
