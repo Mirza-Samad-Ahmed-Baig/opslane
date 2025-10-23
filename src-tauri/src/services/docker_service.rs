@@ -277,6 +277,68 @@ impl DockerService {
         Ok(())
     }
 
+    /// Reset repository to last committed state
+    ///
+    /// Discards all uncommitted changes (staged and unstaged) and removes
+    /// untracked files to ensure the container starts with a clean git state.
+    pub async fn reset_to_committed_state(&self, container_id: &str) -> Result<()> {
+        log::info!("Resetting git repository to committed state in container {container_id}");
+
+        // Step 1: Check if .git directory exists (skip if not a git repo)
+        let check_cmd = vec![
+            "test".to_string(),
+            "-d".to_string(),
+            "/workspace/repo/.git".to_string(),
+        ];
+
+        match self
+            .exec_command_blocking(container_id, check_cmd, None, false)
+            .await
+        {
+            Ok(_) => {
+                log::debug!(".git directory found, proceeding with reset");
+            }
+            Err(_) => {
+                log::info!("Not a git repository, skipping reset");
+                return Ok(());
+            }
+        }
+
+        // Step 2: Discard all changes to tracked files
+        let reset_cmd = vec![
+            "git".to_string(),
+            "reset".to_string(),
+            "--hard".to_string(),
+            "HEAD".to_string(),
+        ];
+
+        self.exec_command_blocking(
+            container_id,
+            reset_cmd,
+            Some("/workspace/repo".to_string()),
+            false,
+        )
+        .await
+        .map_err(|e| anyhow!("Failed to reset to HEAD: {e}"))?;
+
+        log::debug!("Successfully reset tracked files to HEAD");
+
+        // Step 3: Remove all untracked files and directories
+        let clean_cmd = vec!["git".to_string(), "clean".to_string(), "-fd".to_string()];
+
+        self.exec_command_blocking(
+            container_id,
+            clean_cmd,
+            Some("/workspace/repo".to_string()),
+            false,
+        )
+        .await
+        .map_err(|e| anyhow!("Failed to clean untracked files: {e}"))?;
+
+        log::info!("Git repository reset to committed state successfully");
+        Ok(())
+    }
+
     /// Stop a container (with 30 second timeout)
     #[allow(dead_code)] // Will be used by SessionManager in Phase 3
     pub async fn stop_container(&self, container_id: &str) -> Result<()> {

@@ -548,6 +548,12 @@ impl SessionManager {
             log::warn!("Failed to configure git safe.directory (continuing anyway): {e}");
         }
 
+        // Step 5b: Reset repository to committed state only
+        log::info!("Resetting repository to committed state for session {session_id}");
+        if let Err(e) = self.docker.reset_to_committed_state(&container_id).await {
+            log::warn!("Failed to reset repository to committed state (continuing anyway): {e}");
+        }
+
         // Step 6: Update database with container info and set status to "ready"
         if let Err(e) = self
             .db
