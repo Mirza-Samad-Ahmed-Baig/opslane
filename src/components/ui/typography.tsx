@@ -102,8 +102,8 @@ export const Heading3 = React.forwardRef<HTMLHeadingElement, Heading3Props>(
 );
 Heading3.displayName = 'Heading3';
 
-// Body - Default paragraph text (16px)
-const bodyVariants = cva('leading-7 text-foreground transition-colors', {
+// Body - Default paragraph text (14px)
+const bodyVariants = cva('text-sm leading-relaxed text-foreground transition-colors', {
   variants: {
     variant: {
       default: '',
@@ -126,8 +126,8 @@ export const Body = React.forwardRef<HTMLParagraphElement, BodyProps>(
 );
 Body.displayName = 'Body';
 
-// BodyLarge - Emphasized paragraphs (18px)
-const bodyLargeVariants = cva('text-lg leading-relaxed text-foreground transition-colors', {
+// BodyLarge - Emphasized paragraphs (16px)
+const bodyLargeVariants = cva('text-base leading-relaxed text-foreground transition-colors', {
   variants: {
     variant: {
       default: '',

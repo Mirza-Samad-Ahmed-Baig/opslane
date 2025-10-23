@@ -32,7 +32,7 @@ export function BashToolWidget({ tool, isExpanded, onToggle }: ToolWidgetProps) 
             isExpanded && 'rotate-90'
           )}
         />
-        <Terminal className="h-4 w-4 text-green-500" />
+        <Terminal className="h-4 w-4 text-primary" />
         <span className="font-mono text-sm font-medium">Bash</span>
         {description && (
           <span className="text-xs text-muted-foreground truncate max-w-sm">{description}</span>

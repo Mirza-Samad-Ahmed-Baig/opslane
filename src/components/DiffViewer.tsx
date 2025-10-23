@@ -133,11 +133,11 @@ export function DiffViewer({ sessionId }: DiffViewerProps) {
         <h2 className="text-sm font-semibold mb-2">Changes</h2>
         {changes.length > 0 && (
           <div className="flex gap-3 text-xs">
-            <span className="flex items-center gap-1 text-green-600">
+            <span className="flex items-center gap-1 text-status-success-fg">
               <Plus className="h-3 w-3" />
               {totalAdditions}
             </span>
-            <span className="flex items-center gap-1 text-red-600">
+            <span className="flex items-center gap-1 text-status-error-fg">
               <Minus className="h-3 w-3" />
               {totalDeletions}
             </span>
@@ -178,9 +178,10 @@ export function DiffViewer({ sessionId }: DiffViewerProps) {
                     <span
                       className={cn(
                         'text-xs px-1.5 py-0.5 rounded',
-                        change.status === 'added' && 'bg-green-500/20 text-green-600',
-                        change.status === 'modified' && 'bg-yellow-500/20 text-yellow-600',
-                        change.status === 'deleted' && 'bg-red-500/20 text-red-600'
+                        change.status === 'added' && 'bg-status-success-bg text-status-success-fg',
+                        change.status === 'modified' &&
+                          'bg-status-warning-bg text-status-warning-fg',
+                        change.status === 'deleted' && 'bg-status-error-bg text-status-error-fg'
                       )}
                     >
                       {change.status[0]?.toUpperCase()}

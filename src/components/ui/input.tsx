@@ -22,7 +22,8 @@ const inputVariants = cva(
       state: {
         default: '',
         error: 'border-destructive focus-visible:ring-destructive focus-visible:border-destructive',
-        success: 'border-green-500 focus-visible:ring-green-500 focus-visible:border-green-500',
+        success:
+          'border-status-success-border focus-visible:ring-status-success-fg focus-visible:border-status-success-border',
       },
     },
     defaultVariants: {

@@ -68,7 +68,7 @@ export function ReadToolWidget({ tool, isExpanded, onToggle }: ToolWidgetProps) 
             isExpanded && 'rotate-90'
           )}
         />
-        <FileText className="h-4 w-4 text-blue-500" />
+        <FileText className="h-4 w-4 text-primary" />
         <span className="font-mono text-sm font-medium">Read</span>
         <span className="text-xs text-muted-foreground font-mono truncate max-w-md">
           {ToolWidgetUtils.truncatePath(file_path, 60)}

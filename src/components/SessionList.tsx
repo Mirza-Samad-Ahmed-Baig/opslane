@@ -145,10 +145,12 @@ export function SessionList({ activeSessionId }: SessionListProps) {
                       <Circle
                         className={cn(
                           'h-2 w-2 flex-shrink-0',
-                          session.status === 'ready' && 'fill-green-500 text-green-500',
-                          session.status === 'created' && 'fill-yellow-500 text-yellow-500',
-                          session.status === 'cloning' && 'fill-blue-500 text-blue-500',
-                          session.status === 'error' && 'fill-red-500 text-red-500'
+                          session.status === 'ready' &&
+                            'fill-status-success-fg text-status-success-fg',
+                          session.status === 'created' && 'fill-status-info-fg text-status-info-fg',
+                          session.status === 'cloning' &&
+                            'fill-status-warning-fg text-status-warning-fg',
+                          session.status === 'error' && 'fill-status-error-fg text-status-error-fg'
                         )}
                       />
                       <span

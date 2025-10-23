@@ -1,3 +1,5 @@
+@import '@fontsource-variable/inter';
+
 @import 'tailwindcss';
 
 @plugin "tailwindcss-animate";
@@ -8,15 +10,37 @@ body {
   margin: 0;
   padding: 0;
   font-family:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell',
-    'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+    'Inter Variable',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    'Helvetica Neue',
+    'Roboto',
+    sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Enable Inter's OpenType features for professional polish (with feature detection) */
+@supports (font-feature-settings: 'cv02' 1) {
+  body {
+    /* cv02: Open digits, cv03: Curved r, cv04: Open four, cv11: Single-story a */
+    font-feature-settings:
+      'cv02' 1,
+      'cv03' 1,
+      'cv04' 1,
+      'cv11' 1;
+  }
 }
 
 #root {
   width: 100vw;
   height: 100vh;
+}
+
+code,
+pre {
+  font-variant-numeric: tabular-nums; /* Tabular numbers for aligned code */
 }
 
 @theme inline {
@@ -127,39 +151,39 @@ body {
 }
 
 .dark {
-  /* Deep blacks matching Cursor aesthetic */
-  --background: oklch(0.09 0 0); /* ~#171717 - much darker */
+  /* Lighter dark mode for better contrast (matches Cursor #1c1c1c) */
+  --background: oklch(0.11 0 0); /* ~#1c1c1c - improved contrast */
   --foreground: oklch(0.985 0 0); /* ~#fbfbfb - keep */
 
-  /* Subtle card elevation */
-  --card: oklch(0.12 0 0); /* ~#1f1f1f - barely lighter */
+  /* Card with more defined elevation */
+  --card: oklch(0.14 0 0); /* ~#242424 - clearer hierarchy */
   --card-foreground: oklch(0.985 0 0);
 
   /* Popover matches card */
-  --popover: oklch(0.12 0 0);
+  --popover: oklch(0.14 0 0);
   --popover-foreground: oklch(0.985 0 0);
 
   /* Primary: bright white for maximum contrast */
   --primary: oklch(0.99 0 0); /* ~#fcfcfc - very bright */
-  --primary-foreground: oklch(0.09 0 0); /* Dark text on primary */
+  --primary-foreground: oklch(0.11 0 0); /* Match new background */
 
-  /* Secondary/muted: darker and more subtle */
-  --secondary: oklch(0.15 0 0); /* ~#262626 */
+  /* Secondary/muted: better differentiation from cards */
+  --secondary: oklch(0.17 0 0); /* ~#2b2b2b - more distinct */
   --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.15 0 0);
+  --muted: oklch(0.17 0 0); /* ~#2b2b2b - clearer */
   --muted-foreground: oklch(0.65 0 0); /* ~#a6a6a6 - readable gray */
 
   /* Accent: subtle like secondary */
-  --accent: oklch(0.15 0 0);
+  --accent: oklch(0.17 0 0);
   --accent-foreground: oklch(0.985 0 0);
 
-  /* Destructive: darker red for WCAG AA compliance (4.5:1 contrast) */
-  --destructive: oklch(0.58 0.18 20);
+  /* Destructive: slightly brighter for better visibility */
+  --destructive: oklch(0.62 0.18 20);
   --destructive-foreground: oklch(0.985 0 0);
 
-  /* Borders: subtle but visible */
-  --border: oklch(1 0 0 / 8%); /* White 8% opacity - visible structure */
-  --input: oklch(1 0 0 / 10%); /* White 10% opacity - slightly more visible for inputs */
+  /* Borders: more visible for better definition */
+  --border: oklch(1 0 0 / 10%); /* White 10% opacity - clearer structure */
+  --input: oklch(1 0 0 / 15%); /* White 15% opacity - input field boundaries */
 
   /* Focus ring: medium gray */
   --ring: oklch(0.6 0 0); /* ~#999999 */
@@ -172,11 +196,11 @@ body {
   --chart-5: oklch(0.645 0.246 16.439);
 
   /* Sidebar: slightly different from main background */
-  --sidebar: oklch(0.11 0 0); /* ~#1c1c1c */
+  --sidebar: oklch(0.105 0 0); /* ~#1b1b1b - slightly darker than new bg */
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.15 0 0);
+  --sidebar-accent: oklch(0.17 0 0); /* Match new muted color */
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 5%);
   --sidebar-ring: oklch(0.6 0 0);
@@ -204,7 +228,24 @@ body {
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground text-sm;
+  }
+
+  /* Typography hierarchy */
+  h1 {
+    @apply text-2xl font-semibold tracking-tight leading-tight;
+  }
+
+  h2 {
+    @apply text-xl font-semibold tracking-tight leading-snug;
+  }
+
+  h3 {
+    @apply text-lg font-semibold leading-normal;
+  }
+
+  p {
+    @apply text-sm leading-relaxed;
   }
 }
 

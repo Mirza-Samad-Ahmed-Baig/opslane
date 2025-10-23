@@ -78,7 +78,10 @@ export function SessionSetupProgress({ sessionId }: SessionSetupProgressProps) {
         {steps.map((step, index) => (
           <div key={index} className="flex items-center gap-2 text-xs">
             {step.completed ? (
-              <CheckCircle className="h-3 w-3 text-green-500 flex-shrink-0" aria-hidden="true" />
+              <CheckCircle
+                className="h-3 w-3 text-status-success-fg flex-shrink-0"
+                aria-hidden="true"
+              />
             ) : index === currentStep ? (
               <Loader2
                 className="h-3 w-3 animate-spin text-muted-foreground flex-shrink-0"
