@@ -1,12 +1,10 @@
 import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Link, useNavigate } from 'react-router-dom';
-import { QueryClientProvider } from '@tanstack/react-query';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 import { Palette } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
-import { Toaster } from '@/components/ui/toaster';
 import {
   Select,
   SelectContent,
@@ -17,9 +15,9 @@ import {
 import { ChatInput } from '@/components/chat/ChatInput';
 import { SessionList } from '@/components/SessionList';
 import { CompactRepositoryBadge } from '@/components/CompactRepositoryBadge';
+import { GlobalSyncStatus } from '@/components/sync/GlobalSyncStatus';
 import { ComponentShowcase } from '@/pages/ComponentShowcase';
 import { SessionDetailPage } from '@/pages/SessionDetailPage';
-import { queryClient } from '@/lib/query-client';
 import { useDockerStatus, useCreateSession, useProjects, useGetOrCreateProject } from '@/hooks';
 import type { SessionProgressEvent, NewSession } from '@/types/session';
 import type { Project } from '@/types/project';
@@ -289,17 +287,24 @@ function App() {
   // Log app mount
   logger.info('Opslane application started');
 
+  // Get projects to determine if we should show global sync status
+  const { data: projects } = useProjects();
+
+  // Use the first project for global sync status (typically there's only one)
+  // In the future, this could be enhanced with a "current project" context
+  const primaryProject = projects?.[0];
+
   return (
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/session/:id" element={<SessionDetailPage />} />
-          <Route path="/showcase" element={<ComponentShowcase />} />
-        </Routes>
-      </BrowserRouter>
-      <Toaster />
-    </QueryClientProvider>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/session/:id" element={<SessionDetailPage />} />
+        <Route path="/showcase" element={<ComponentShowcase />} />
+      </Routes>
+
+      {/* Global sync status bar - always visible at bottom when project exists */}
+      {primaryProject && <GlobalSyncStatus projectId={primaryProject.id} />}
+    </BrowserRouter>
   );
 }
 
