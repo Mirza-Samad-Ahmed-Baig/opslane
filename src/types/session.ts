@@ -30,6 +30,11 @@ export interface Session {
   last_sync_at?: string;
   sync_status?: 'idle' | 'syncing' | 'synced' | 'error';
 
+  // Two-way sync tracking (only one session active at a time)
+  is_sync_active: boolean; // Is two-way sync enabled for this session?
+  sync_activated_at?: string; // When was sync enabled?
+  sync_deactivated_at?: string; // When was sync last disabled?
+
   created_at: string; // ISO 8601 timestamp
   updated_at: string; // ISO 8601 timestamp
   is_deleted: boolean;

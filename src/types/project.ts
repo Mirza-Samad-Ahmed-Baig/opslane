@@ -11,6 +11,10 @@ export interface Project {
   created_at: string;
   updated_at: string;
   is_deleted: boolean;
+
+  // Active sync tracking - only ONE session can be active at a time
+  active_sync_session_id?: string | null; // Which session has two-way sync
+  active_sync_started_at?: string | null; // When sync was enabled
 }
 
 /**
