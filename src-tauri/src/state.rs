@@ -1,5 +1,5 @@
 use crate::database::Database;
-use crate::services::{ClaudeService, DockerService, SessionManager};
+use crate::services::{ClaudeService, DockerService, SessionManager, SyncManager};
 use std::sync::Arc;
 
 /// Global application state
@@ -18,6 +18,10 @@ pub struct AppState {
     /// Claude service for managing Claude Code interactions
     #[allow(dead_code)] // Will be used in Tauri commands (Phase 4)
     pub claude_service: Arc<ClaudeService>,
+
+    /// Sync manager for two-way file sync
+    #[allow(dead_code)] // Will be used in Tauri commands (Phase 4)
+    pub sync_manager: Arc<SyncManager>,
 }
 
 impl AppState {
@@ -59,6 +63,10 @@ impl AppState {
         let claude_service = ClaudeService::new(Arc::clone(&docker), Arc::clone(&db));
         let claude_service = Arc::new(claude_service);
 
+        // Initialize sync manager
+        let sync_manager = SyncManager::new(Arc::clone(&db), Arc::clone(&docker));
+        let sync_manager = Arc::new(sync_manager);
+
         log::info!("Application state initialized successfully");
 
         Ok(Self {
@@ -66,6 +74,7 @@ impl AppState {
             docker,
             session_manager,
             claude_service,
+            sync_manager,
         })
     }
 }

@@ -76,6 +76,10 @@ pub fn run() {
             get_session_changes,
             // Sync commands
             sync_session_to_project,
+            enable_session_sync,
+            disable_all_sync,
+            get_sync_status,
+            is_session_syncing,
             // Credentials commands
             get_claude_credentials,
         ])

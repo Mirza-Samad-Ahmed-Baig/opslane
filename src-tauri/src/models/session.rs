@@ -44,6 +44,11 @@ pub struct Session {
     // Sync tracking
     pub last_sync_at: Option<String>, // ISO 8601 timestamp
     pub sync_status: Option<String>,  // "idle" | "syncing" | "synced" | "error"
+
+    // Two-way sync tracking (only one session active at a time)
+    pub is_sync_active: bool, // Is two-way sync enabled for this session?
+    pub sync_activated_at: Option<String>, // When was sync enabled?
+    pub sync_deactivated_at: Option<String>, // When was sync last disabled?
 }
 
 impl Session {

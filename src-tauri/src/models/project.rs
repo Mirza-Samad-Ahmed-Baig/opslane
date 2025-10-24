@@ -25,6 +25,10 @@ pub struct Project {
     pub created_at: String,
     pub updated_at: String,
     pub is_deleted: bool,
+
+    // Active sync tracking - only ONE session can be active at a time
+    pub active_sync_session_id: Option<String>, // Which session has two-way sync
+    pub active_sync_started_at: Option<String>, // When sync was enabled
 }
 
 /// NewProject - input for creating a project

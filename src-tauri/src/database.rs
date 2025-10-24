@@ -96,14 +96,16 @@ impl Database {
         let session = sqlx::query_as::<_, crate::models::Session>(
             r#"
             INSERT INTO sessions (
-                id, project_id, name, base_branch, initial_message, status, is_deleted
-            ) VALUES (?, ?, ?, ?, ?, 'created', 0)
+                id, project_id, name, base_branch, initial_message, status, is_deleted,
+                is_sync_active, sync_activated_at, sync_deactivated_at
+            ) VALUES (?, ?, ?, ?, ?, 'created', 0, 0, NULL, NULL)
             RETURNING id, project_id, name, session_repo_path, base_branch,
                       container_id, container_name, container_branch,
                       status, error_message, volume_name, claude_session_id,
                       last_activity_at, initial_message,
                       created_at, updated_at, is_deleted,
-                      last_sync_at, sync_status
+                      last_sync_at, sync_status,
+                      is_sync_active, sync_activated_at, sync_deactivated_at
             "#,
         )
         .bind(&id)
@@ -128,7 +130,8 @@ impl Database {
                    s.status, s.error_message, s.volume_name, s.claude_session_id,
                    s.last_activity_at, s.initial_message,
                    s.created_at, s.updated_at, s.is_deleted,
-                   s.last_sync_at, s.sync_status
+                   s.last_sync_at, s.sync_status,
+                   s.is_sync_active, s.sync_activated_at, s.sync_deactivated_at
             FROM sessions s
             WHERE s.is_deleted = 0
             ORDER BY s.created_at DESC
@@ -150,7 +153,8 @@ impl Database {
                    status, error_message, volume_name, claude_session_id,
                    last_activity_at, initial_message,
                    created_at, updated_at, is_deleted,
-                   last_sync_at, sync_status
+                   last_sync_at, sync_status,
+                   is_sync_active, sync_activated_at, sync_deactivated_at
             FROM sessions
             WHERE id = ? AND is_deleted = 0
             "#,
@@ -368,7 +372,8 @@ impl Database {
         // Try to find existing project
         let existing = sqlx::query_as::<_, crate::models::Project>(
             r#"
-            SELECT id, name, local_repo_path, last_opened_at, created_at, updated_at, is_deleted
+            SELECT id, name, local_repo_path, last_opened_at, created_at, updated_at, is_deleted,
+                   active_sync_session_id, active_sync_started_at
             FROM projects
             WHERE local_repo_path = ? AND is_deleted = 0
             "#,
@@ -406,9 +411,11 @@ impl Database {
 
         let project = sqlx::query_as::<_, crate::models::Project>(
             r#"
-            INSERT INTO projects (id, name, local_repo_path, last_opened_at, is_deleted)
-            VALUES (?, ?, ?, datetime('now'), 0)
-            RETURNING id, name, local_repo_path, last_opened_at, created_at, updated_at, is_deleted
+            INSERT INTO projects (id, name, local_repo_path, last_opened_at, is_deleted,
+                                 active_sync_session_id, active_sync_started_at)
+            VALUES (?, ?, ?, datetime('now'), 0, NULL, NULL)
+            RETURNING id, name, local_repo_path, last_opened_at, created_at, updated_at, is_deleted,
+                      active_sync_session_id, active_sync_started_at
             "#,
         )
         .bind(&id)
@@ -426,7 +433,8 @@ impl Database {
     pub async fn list_projects(&self) -> Result<Vec<crate::models::Project>> {
         let projects = sqlx::query_as::<_, crate::models::Project>(
             r#"
-            SELECT id, name, local_repo_path, last_opened_at, created_at, updated_at, is_deleted
+            SELECT id, name, local_repo_path, last_opened_at, created_at, updated_at, is_deleted,
+                   active_sync_session_id, active_sync_started_at
             FROM projects
             WHERE is_deleted = 0
             ORDER BY last_opened_at DESC NULLS LAST, created_at DESC
@@ -443,7 +451,8 @@ impl Database {
     pub async fn get_project(&self, id: &str) -> Result<crate::models::Project> {
         let project = sqlx::query_as::<_, crate::models::Project>(
             r#"
-            SELECT id, name, local_repo_path, last_opened_at, created_at, updated_at, is_deleted
+            SELECT id, name, local_repo_path, last_opened_at, created_at, updated_at, is_deleted,
+                   active_sync_session_id, active_sync_started_at
             FROM projects
             WHERE id = ? AND is_deleted = 0
             "#,
@@ -585,6 +594,9 @@ mod tests {
             "is_deleted",
             "last_sync_at",
             "sync_status",
+            "is_sync_active",
+            "sync_activated_at",
+            "sync_deactivated_at",
         ];
 
         assert_eq!(
