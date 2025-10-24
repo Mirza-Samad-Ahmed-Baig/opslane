@@ -3,6 +3,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
 
+// Shared state to prevent duplicate toasts across all hook instances
+const lastToastTime = { enable: 0, disable: 0 };
+const TOAST_DEBOUNCE_MS = 100; // Prevent duplicate toasts within 100ms
+
 export interface SyncState {
   active_session_id: string | null;
   started_at: string | null;
@@ -53,10 +57,8 @@ export function useActiveSync(projectId: string) {
           is_active: true,
         });
 
-        // Subtle notification (Principle #10: Calm Technology)
-        toast.success(`Syncing to ${event.payload.session_name}`, {
-          duration: 3000,
-        });
+        // Toast is shown by the component that triggered the action
+        // to avoid duplicate toasts from multiple hook instances
       }
     );
 
@@ -67,7 +69,8 @@ export function useActiveSync(projectId: string) {
         is_active: false,
       });
 
-      toast.info('Sync stopped', { duration: 2000 });
+      // Toast is shown by the component that triggered the action
+      // to avoid duplicate toasts from multiple hook instances
     });
 
     const unlistenSwitchRequired = listen<SyncSwitchRequest>('sync-switch-required', (event) => {
@@ -84,7 +87,7 @@ export function useActiveSync(projectId: string) {
   }, []);
 
   // Enable sync for a session
-  const enableSync = useCallback(async (sessionId: string) => {
+  const enableSync = useCallback(async (sessionId: string, sessionName?: string) => {
     setLoading(true);
     setError(null);
 
@@ -92,6 +95,17 @@ export function useActiveSync(projectId: string) {
       await invoke('enable_session_sync', {
         request: { session_id: sessionId },
       });
+
+      // Show success toast only if not shown recently (debounce to prevent duplicates)
+      const now = Date.now();
+      if (now - lastToastTime.enable > TOAST_DEBOUNCE_MS) {
+        lastToastTime.enable = now;
+        if (sessionName) {
+          toast.success(`Syncing to ${sessionName}`, { duration: 3000 });
+        } else {
+          toast.success('Sync enabled', { duration: 3000 });
+        }
+      }
     } catch (err) {
       const errorMsg = err as string;
       setError(errorMsg);
@@ -118,6 +132,13 @@ export function useActiveSync(projectId: string) {
       await invoke('disable_all_sync', {
         request: { project_id: projectId },
       });
+
+      // Show success toast only if not shown recently (debounce to prevent duplicates)
+      const now = Date.now();
+      if (now - lastToastTime.disable > TOAST_DEBOUNCE_MS) {
+        lastToastTime.disable = now;
+        toast.info('Sync stopped', { duration: 2000 });
+      }
     } catch (err) {
       setError(err as string);
       toast.error('Failed to stop sync', {

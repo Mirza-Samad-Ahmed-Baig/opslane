@@ -52,7 +52,7 @@ export function SessionCardWithSync({ session }: SessionCardWithSyncProps) {
   };
 
   const handleConfirmSync = () => {
-    enableSync(session.id);
+    enableSync(session.id, session.name);
     setShowSyncConfirm(false);
   };
 
