@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
-import { Loader2, FolderOpen, Circle, ChevronDown, ChevronRight } from 'lucide-react';
-import { useSessions, useProjects } from '@/hooks';
+import { Loader2, FolderOpen, ChevronDown, ChevronRight } from 'lucide-react';
+import { useSessions, useProjects, useSessionPagination } from '@/hooks';
 import { cn } from '@/lib/utils';
 import { useState, useMemo } from 'react';
 import type { Project } from '@/types/project';
@@ -16,18 +16,105 @@ interface ProjectGroup {
   sessions: Session[];
 }
 
+interface ProjectGroupWithPaginationProps {
+  project: Project;
+  sessions: Session[];
+  isCollapsed: boolean;
+  onToggleCollapse: () => void;
+  activeSessionId?: string;
+}
+
+function ProjectGroupWithPagination({
+  project,
+  sessions,
+  isCollapsed,
+  onToggleCollapse,
+  activeSessionId,
+}: ProjectGroupWithPaginationProps) {
+  const navigate = useNavigate();
+
+  const { visibleSessions, hasMoreSessions, hiddenCount, loadMoreSessions } = useSessionPagination({
+    sessions,
+    initialCount: 5,
+    loadMoreCount: 10,
+  });
+
+  return (
+    <div className="mb-3 last:mb-0">
+      {/* Project Header */}
+      <button
+        onClick={onToggleCollapse}
+        className="w-full px-3 py-3 flex items-center gap-2 hover:bg-muted/50 transition-colors"
+        aria-expanded={!isCollapsed}
+        aria-controls={`sessions-${project.id}`}
+        aria-label={`${project.name} project with ${sessions.length} ${sessions.length === 1 ? 'session' : 'sessions'}`}
+      >
+        {isCollapsed ? (
+          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+        ) : (
+          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+        )}
+        <FolderOpen className="h-4 w-4 text-muted-foreground" />
+        <span className="text-base font-semibold truncate" title={project.local_repo_path}>
+          {project.name}
+        </span>
+        <span className="ml-auto text-xs text-muted-foreground font-medium">{sessions.length}</span>
+      </button>
+
+      {/* Sessions in this project */}
+      {!isCollapsed && (
+        <div id={`sessions-${project.id}`} className="space-y-1 pl-9">
+          {visibleSessions.map((session) => (
+            <button
+              key={session.id}
+              onClick={() => navigate(`/session/${session.id}`)}
+              className={cn(
+                'w-full px-3 py-2 flex items-center gap-2 hover:bg-muted/50 transition-colors text-left',
+                'group relative',
+                activeSessionId === session.id && 'bg-muted border-l-2 border-primary pl-[10px]'
+              )}
+            >
+              <span
+                className="text-sm truncate flex-1 group-hover:text-foreground"
+                title={session.name}
+              >
+                {session.name}
+              </span>
+            </button>
+          ))}
+
+          {/* Load more button */}
+          {hasMoreSessions && (
+            <div className="px-3 py-2">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  loadMoreSessions();
+                }}
+                className="w-full text-xs text-muted-foreground hover:text-foreground transition-colors py-1.5 rounded hover:bg-muted/30"
+              >
+                Load 10 more ({hiddenCount} hidden)
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * SessionList - Left navigation showing sessions grouped by projects
  *
  * Features:
  * - Project-based grouping with folder names
  * - Collapsible project groups
+ * - Pagination: Show last 5 sessions per project
  * - Status indicators with color-coded dots
  * - Click to navigate to session detail
  * - Auto-refresh via React Query event listeners
  */
 export function SessionList({ activeSessionId }: SessionListProps) {
-  const navigate = useNavigate();
   const { data: sessions, isLoading: sessionsLoading } = useSessions();
   const { data: projects, isLoading: projectsLoading } = useProjects();
 
@@ -106,64 +193,14 @@ export function SessionList({ activeSessionId }: SessionListProps) {
           const isCollapsed = collapsedProjects.has(project.id);
 
           return (
-            <div key={project.id} className="mb-2">
-              {/* Project Header */}
-              <button
-                onClick={() => toggleProjectCollapse(project.id)}
-                className="w-full px-3 py-2 flex items-center gap-2 hover:bg-muted/50 transition-colors"
-                aria-expanded={!isCollapsed}
-                aria-controls={`sessions-${project.id}`}
-                aria-label={`${project.name} project with ${projectSessions.length} ${projectSessions.length === 1 ? 'session' : 'sessions'}`}
-              >
-                {isCollapsed ? (
-                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                ) : (
-                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                )}
-                <FolderOpen className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-medium truncate" title={project.local_repo_path}>
-                  {project.name}
-                </span>
-                <span className="ml-auto text-xs text-muted-foreground">
-                  {projectSessions.length}
-                </span>
-              </button>
-
-              {/* Sessions in this project */}
-              {!isCollapsed && (
-                <div id={`sessions-${project.id}`} className="space-y-1 pl-4">
-                  {projectSessions.map((session) => (
-                    <button
-                      key={session.id}
-                      onClick={() => navigate(`/session/${session.id}`)}
-                      className={cn(
-                        'w-full px-3 py-2 flex items-center gap-2 hover:bg-muted/50 transition-colors text-left',
-                        'group',
-                        activeSessionId === session.id && 'bg-muted'
-                      )}
-                    >
-                      <Circle
-                        className={cn(
-                          'h-2 w-2 flex-shrink-0',
-                          session.status === 'ready' &&
-                            'fill-status-success-fg text-status-success-fg',
-                          session.status === 'created' && 'fill-status-info-fg text-status-info-fg',
-                          session.status === 'cloning' &&
-                            'fill-status-warning-fg text-status-warning-fg',
-                          session.status === 'error' && 'fill-status-error-fg text-status-error-fg'
-                        )}
-                      />
-                      <span
-                        className="text-sm truncate flex-1 group-hover:text-foreground"
-                        title={session.name}
-                      >
-                        {session.name}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+            <ProjectGroupWithPagination
+              key={project.id}
+              project={project}
+              sessions={projectSessions}
+              isCollapsed={isCollapsed}
+              onToggleCollapse={() => toggleProjectCollapse(project.id)}
+              activeSessionId={activeSessionId}
+            />
           );
         })}
       </div>

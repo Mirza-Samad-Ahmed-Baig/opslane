@@ -212,7 +212,7 @@ function HomePage() {
       {/* Main Layout - Left nav + Center quick-start */}
       <div className="flex-1 flex overflow-hidden">
         {/* Left Navigation Panel - Session List - hidden on mobile, visible on tablet+ */}
-        <div className="hidden md:flex w-60 flex-shrink-0 flex-col overflow-auto">
+        <div className="hidden md:flex md:w-[280px] lg:w-80 flex-shrink-0 flex-col overflow-auto">
           <SessionList />
         </div>
 

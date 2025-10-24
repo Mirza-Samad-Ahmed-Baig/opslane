@@ -360,8 +360,8 @@ export function SessionDetailPage() {
       <div
         className="flex-1 grid overflow-hidden
         grid-cols-1
-        md:grid-cols-[minmax(180px,240px)_1fr]
-        lg:grid-cols-[minmax(180px,240px)_1fr_minmax(320px,480px)]
+        md:grid-cols-[280px_1fr]
+        lg:grid-cols-[320px_1fr_minmax(320px,480px)]
       "
       >
         {/* Session list - hidden on mobile, visible on tablet+ */}

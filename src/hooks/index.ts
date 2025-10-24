@@ -9,3 +9,4 @@ export { useSession } from './useSession';
 export { useProjects, useGetOrCreateProject, useProject, useDeleteProject } from './useProjects';
 export { useSyncSession } from './useSyncSession';
 export { useSessionChanges } from './useSessionChanges';
+export { useSessionPagination } from './useSessionPagination';
