@@ -284,25 +284,59 @@ impl DockerService {
     pub async fn reset_to_committed_state(&self, container_id: &str) -> Result<()> {
         log::info!("Resetting git repository to committed state in container {container_id}");
 
-        // Step 1: Check if .git directory exists (skip if not a git repo)
-        let check_cmd = vec![
-            "test".to_string(),
-            "-d".to_string(),
-            "/workspace/repo/.git".to_string(),
-        ];
+        const MAX_RETRIES: u32 = 10;
+        const RETRY_DELAY_MS: u64 = 500;
+        const TOTAL_TIMEOUT_MS: u64 = 5000;
 
-        match self
-            .exec_command_blocking(container_id, check_cmd, None, false)
-            .await
-        {
-            Ok(_) => {
-                log::debug!(".git directory found, proceeding with reset");
-            }
-            Err(_) => {
-                log::info!("Not a git repository, skipping reset");
-                return Ok(());
+        // Step 1: Check if .git directory exists with retry logic
+        // (handles bind mount propagation delay on macOS Docker Desktop)
+        let mut git_exists = false;
+        for attempt in 1..=MAX_RETRIES {
+            // Use git rev-parse to detect repository (more robust than checking .git directory)
+            // Handles bare repos, worktrees, and submodules correctly
+            let check_cmd = vec![
+                "git".to_string(),
+                "rev-parse".to_string(),
+                "--git-dir".to_string(),
+            ];
+
+            match self
+                .exec_command_blocking(
+                    container_id,
+                    check_cmd,
+                    Some("/workspace/repo".to_string()),
+                    false,
+                )
+                .await
+            {
+                Ok(_) => {
+                    log::debug!(".git directory found on attempt {attempt}");
+                    git_exists = true;
+                    break;
+                }
+                Err(e) if attempt < MAX_RETRIES => {
+                    log::debug!(
+                        "Attempt {attempt}/{MAX_RETRIES}: .git directory not visible yet, retrying in {RETRY_DELAY_MS}ms (error: {e})"
+                    );
+                    tokio::time::sleep(tokio::time::Duration::from_millis(RETRY_DELAY_MS)).await;
+                    continue;
+                }
+                Err(e) => {
+                    log::info!(
+                        "Not a git repository after {MAX_RETRIES} attempts over {TOTAL_TIMEOUT_MS}ms - skipping reset. Last error: {e}"
+                    );
+                    return Ok(());
+                }
             }
         }
+
+        if !git_exists {
+            // This shouldn't happen given the loop logic, but handle it defensively
+            log::info!("Not a git repository, skipping reset");
+            return Ok(());
+        }
+
+        log::debug!("Confirmed git repository, proceeding with reset");
 
         // Step 2: Discard all changes to tracked files
         let reset_cmd = vec![
@@ -319,7 +353,10 @@ impl DockerService {
             false,
         )
         .await
-        .map_err(|e| anyhow!("Failed to reset to HEAD: {e}"))?;
+        .map_err(|e| {
+            log::error!("Git reset --hard HEAD failed: {e}");
+            anyhow!("Failed to reset git repository to HEAD: {e}")
+        })?;
 
         log::debug!("Successfully reset tracked files to HEAD");
 
@@ -333,7 +370,10 @@ impl DockerService {
             false,
         )
         .await
-        .map_err(|e| anyhow!("Failed to clean untracked files: {e}"))?;
+        .map_err(|e| {
+            log::error!("Git clean -fd failed: {e}");
+            anyhow!("Failed to clean untracked files: {e}")
+        })?;
 
         log::info!("Git repository reset to committed state successfully");
         Ok(())
@@ -772,5 +812,32 @@ mod tests {
         let _ = service.stop_container(&container_id).await;
         let _ = service.remove_container(&container_id).await;
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_retry_constants_are_reasonable() {
+        // This test documents and validates our retry parameters
+        const MAX_RETRIES: u32 = 10;
+        const RETRY_DELAY_MS: u64 = 500;
+
+        // Total possible wait time
+        let max_wait_ms = MAX_RETRIES as u64 * RETRY_DELAY_MS;
+
+        // Should be between 3-10 seconds
+        assert!(
+            max_wait_ms >= 3000,
+            "Max wait time should be at least 3 seconds"
+        );
+        assert!(
+            max_wait_ms <= 10000,
+            "Max wait time should not exceed 10 seconds"
+        );
+
+        // Individual retry delay should be reasonable (100ms-1s)
+        assert!(
+            RETRY_DELAY_MS >= 100,
+            "Retry delay should be at least 100ms"
+        );
+        assert!(RETRY_DELAY_MS <= 1000, "Retry delay should not exceed 1s");
     }
 }

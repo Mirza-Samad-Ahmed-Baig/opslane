@@ -550,9 +550,13 @@ impl SessionManager {
 
         // Step 5b: Reset repository to committed state only
         log::info!("Resetting repository to committed state for session {session_id}");
-        if let Err(e) = self.docker.reset_to_committed_state(&container_id).await {
-            log::warn!("Failed to reset repository to committed state (continuing anyway): {e}");
-        }
+        self.docker
+            .reset_to_committed_state(&container_id)
+            .await
+            .map_err(|e| {
+                log::error!("Failed to reset repository to committed state: {e}");
+                anyhow::anyhow!("Failed to reset repository to committed state: {e}")
+            })?;
 
         // Step 6: Update database with container info and set status to "ready"
         if let Err(e) = self
