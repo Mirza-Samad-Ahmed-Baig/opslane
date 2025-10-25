@@ -23,6 +23,7 @@ import type { SessionProgressEvent, NewSession } from '@/types/session';
 import type { Project } from '@/types/project';
 import type { ImageAttachment } from '@/types/messages';
 import { logger } from './utils/logger';
+import { toastPatterns } from '@/lib/toast-patterns';
 import './App.css';
 
 function HomePage() {
@@ -293,6 +294,33 @@ function App() {
   // Use the first project for global sync status (typically there's only one)
   // In the future, this could be enhanced with a "current project" context
   const primaryProject = projects?.[0];
+
+  // Listen for credential refresh errors on startup
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    const setupCredentialErrorListener = async () => {
+      unlisten = await listen<{ error: string; timestamp: string }>(
+        'credential-refresh-error',
+        (event) => {
+          // Show error toast with actionable message
+          toastPatterns.errorWithDescription(
+            'Failed to refresh Claude credentials',
+            event.payload.error
+          );
+          logger.warn('Credential refresh failed on startup', event.payload);
+        }
+      );
+    };
+
+    setupCredentialErrorListener();
+
+    return () => {
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, []);
 
   return (
     <BrowserRouter>
