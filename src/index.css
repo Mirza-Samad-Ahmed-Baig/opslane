@@ -293,6 +293,22 @@ pre {
     word-wrap: break-word;
   }
 
+  /* IMPORTANT: Disable prose plugin's default code styling
+   * We use custom React components for code rendering via markdownComponents
+   * The @tailwindcss/typography plugin adds unwanted backgrounds/padding by default
+   *
+   * WARNING: This override is critical for markdown rendering.
+   * Removing or modifying may cause inline code to display incorrectly.
+   * Conflicts with: @tailwindcss/typography default styles
+   */
+  :where(code):not(:where([class~='not-prose'], [class~='not-prose'] *)) {
+    background-color: transparent !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    font-weight: inherit !important;
+    color: inherit !important;
+  }
+
   /* Better table overflow handling */
   table {
     display: block;

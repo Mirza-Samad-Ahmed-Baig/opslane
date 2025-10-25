@@ -201,7 +201,18 @@ export const markdownComponents: Partial<Components> = {
     className?: string;
     children?: React.ReactNode;
   }) => {
-    return inline ? (
+    const childString = String(children);
+    const trimmedForDetection = childString.trim();
+
+    // ReactMarkdown may not set inline=true for single backtick code
+    // when certain markdown patterns or plugins are involved
+    const hasNoNewlines = !trimmedForDetection.includes('\n');
+    const hasNoLanguageClass = !className || !className.startsWith('language-');
+    const isReasonableLength = trimmedForDetection.length < 200;
+    const shouldBeInline =
+      inline === true || (hasNoNewlines && hasNoLanguageClass && isReasonableLength);
+
+    return shouldBeInline ? (
       <InlineCode className={className} {...props}>
         {children}
       </InlineCode>
@@ -213,6 +224,7 @@ export const markdownComponents: Partial<Components> = {
   },
 
   // Pre tag (handled by code block)
+  // ReactMarkdown wraps code blocks in <pre><code>, so we return the code block directly
   pre: ({ children }) => <>{children}</>,
 
   // Horizontal rule
