@@ -107,7 +107,7 @@ impl SyncManager {
 
         // Start file watcher
         let project_path = PathBuf::from(&project.local_repo_path);
-        let mut rx = self
+        let rx = self
             .watcher
             .start_sync(session_id.to_string(), project_path)
             .await?;
@@ -121,30 +121,69 @@ impl SyncManager {
             }
         }
 
-        // Spawn task to handle file events
+        // Spawn task to handle file events (local → container)
         let docker = self.docker.clone();
         let db = self.db.clone();
         let session_id_clone = session_id.to_string();
         let project_path_clone = PathBuf::from(&project.local_repo_path);
+        let window_clone = window.clone();
 
         let task_handle = tokio::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                debug!("Processing file event: {:?}", event.path);
+            // Channel for local → container sync
+            let mut local_to_container_rx = rx;
 
-                // Push file to container
-                if let Err(e) = push_file_to_container(
-                    &docker,
-                    &db,
-                    &event.session_id,
-                    &event.path,
-                    &project_path_clone,
-                )
-                .await
-                {
-                    error!("Failed to push file to container: {e}");
+            // Periodic interval for container → local sync (every 5 seconds)
+            let mut sync_interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
+            sync_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+            loop {
+                tokio::select! {
+                    // Handle local file changes → push to container
+                    Some(event) = local_to_container_rx.recv() => {
+                        debug!("Processing local → container file event: {:?}", event.path);
+
+                        if let Err(e) = push_file_to_container(
+                            &docker,
+                            &db,
+                            &event.session_id,
+                            &event.path,
+                            &project_path_clone,
+                        )
+                        .await
+                        {
+                            error!("Failed to push file to container: {e}");
+                        }
+                    }
+
+                    // Periodic check for container changes → pull to local
+                    _ = sync_interval.tick() => {
+                        debug!("Checking for container changes to sync back...");
+
+                        // Import SessionManager to call sync_back_to_project
+                        // Note: We'll need to pass session_manager instance
+                        // For now, we'll call the underlying logic directly
+                        if let Err(e) = sync_container_changes_back(
+                            &docker,
+                            &db,
+                            &session_id_clone,
+                            &window_clone,
+                        )
+                        .await
+                        {
+                            // Don't spam logs for "no changes" scenarios
+                            if !e.to_string().contains("no changes") {
+                                debug!("Container → local sync check: {e}");
+                            }
+                        }
+                    }
+
+                    // Exit if channel is closed
+                    else => {
+                        debug!("Sync task ended for session: {session_id_clone}");
+                        break;
+                    }
                 }
             }
-            debug!("Sync task ended for session: {session_id_clone}");
         });
 
         // Store the task handle
@@ -365,6 +404,40 @@ async fn push_file_to_container(
         rel_path.display(),
         container_path
     );
+    Ok(())
+}
+
+/// Check for container changes and sync them back to local (container → local)
+async fn sync_container_changes_back(
+    docker: &Arc<DockerService>,
+    db: &Arc<Database>,
+    session_id: &str,
+    window: &Window,
+) -> Result<()> {
+    use crate::services::SessionManager;
+
+    // Create a temporary SessionManager instance to call sync_back_to_project
+    // Using default resource limits (same as AppState)
+    let session_manager = SessionManager::new(
+        Arc::clone(db),
+        Arc::clone(docker),
+        1.0,  // default_cpu_limit
+        2048, // default_memory_limit_mb
+    );
+
+    // Call the existing sync_back_to_project function
+    let result = session_manager
+        .sync_back_to_project(session_id, window)
+        .await?;
+
+    // Only log if files were actually synced
+    if result.files_synced > 0 {
+        info!(
+            "Synced {} files from container to local ({} bytes in {}ms)",
+            result.files_synced, result.bytes_synced, result.duration_ms
+        );
+    }
+
     Ok(())
 }
 

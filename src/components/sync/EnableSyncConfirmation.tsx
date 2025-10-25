@@ -50,13 +50,14 @@ export function EnableSyncConfirmation({
           <AlertDialogDescription className="space-y-3">
             {/* Progressive disclosure - essential info first (Principle #5) */}
             <p className="font-medium">
-              This will sync your local file changes to "{session.name}"
+              This will keep your local files and "{session.name}" in sync
             </p>
 
             {/* Clear consequences (Principle #4: Transparent State) */}
             <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md p-3">
               <p className="text-sm space-y-1">
-                <span className="block">• All saves in your editor will copy to this session</span>
+                <span className="block">• Local changes automatically copy to this session</span>
+                <span className="block">• Session changes automatically sync back to local</span>
                 <span className="block">• Other sessions remain isolated</span>
                 <span className="block">• You can stop syncing anytime</span>
               </p>
@@ -70,7 +71,7 @@ export function EnableSyncConfirmation({
                 className="mt-0.5"
               />
               <span className="text-sm select-none">
-                I understand local changes will sync to this session
+                I understand files will sync in both directions
               </span>
             </label>
           </AlertDialogDescription>
