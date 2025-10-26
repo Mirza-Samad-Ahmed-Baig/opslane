@@ -1,14 +1,6 @@
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
-import {
-  ArrowLeft,
-  Loader2,
-  AlertCircle,
-  ChevronDown,
-  ChevronUp,
-  ArrowUpDown,
-  XCircle,
-} from 'lucide-react';
+import { ArrowLeft, Loader2, AlertCircle, ChevronDown, ChevronUp, ArrowUpDown } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { useSession, useProject } from '@/hooks';
@@ -18,6 +10,7 @@ import { MessagePanel } from '@/components/MessagePanel';
 import { DiffViewer } from '@/components/DiffViewer';
 import { SessionStatusBadge } from '@/components/SessionStatusBadge';
 import { EnableSyncConfirmation } from '@/components/sync/EnableSyncConfirmation';
+import { HeaderSyncStatus } from '@/components/sync/HeaderSyncStatus';
 import { logger } from '@/utils/logger';
 import type { DisplayMessage, ImageAttachment } from '@/types/messages';
 
@@ -55,7 +48,6 @@ export function SessionDetailPage() {
   const {
     isSessionActive,
     enableSync,
-    stopSync,
     loading: syncLoading,
   } = useActiveSync(session?.project_id || '');
   const isSyncActive = session ? isSessionActive(session.id) : false;
@@ -129,11 +121,6 @@ export function SessionDetailPage() {
     if (!session) return;
     enableSync(session.id, session.name);
     setShowEnableSyncDialog(false);
-  };
-
-  // Handle stop sync mode
-  const handleStopSync = () => {
-    stopSync();
   };
 
   logger.debug('[SessionDetail] Session status', {
@@ -224,51 +211,30 @@ export function SessionDetailPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {/* Two-way sync mode toggle */}
-          {session.status === 'ready' && (
-            <>
-              {isSyncActive ? (
-                <Button
-                  variant="outline"
-                  onClick={handleStopSync}
-                  disabled={syncLoading}
-                  className="gap-2 border-amber-500 bg-amber-50 hover:bg-amber-100 text-amber-900 dark:border-amber-600 dark:bg-amber-950/30 dark:hover:bg-amber-950/50 dark:text-amber-200"
-                  title="Stop live sync mode"
-                >
-                  {syncLoading ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Stopping...
-                    </>
-                  ) : (
-                    <>
-                      <XCircle className="h-4 w-4" />
-                      Stop Sync Mode
-                    </>
-                  )}
-                </Button>
+          {/* Global sync status - shows if ANY session is syncing */}
+          {session.project_id && <HeaderSyncStatus projectId={session.project_id} />}
+
+          {/* Two-way sync mode toggle - shows for THIS session only when sync is not active */}
+          {session.status === 'ready' && !isSyncActive && (
+            <Button
+              variant="outline"
+              onClick={() => setShowEnableSyncDialog(true)}
+              disabled={syncLoading}
+              className="gap-2"
+              title="Enable live sync mode - local changes will automatically sync to container"
+            >
+              {syncLoading ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Enabling...
+                </>
               ) : (
-                <Button
-                  variant="outline"
-                  onClick={() => setShowEnableSyncDialog(true)}
-                  disabled={syncLoading}
-                  className="gap-2"
-                  title="Enable live sync mode - local changes will automatically sync to container"
-                >
-                  {syncLoading ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Enabling...
-                    </>
-                  ) : (
-                    <>
-                      <ArrowUpDown className="h-4 w-4" />
-                      Enable Sync Mode
-                    </>
-                  )}
-                </Button>
+                <>
+                  <ArrowUpDown className="h-4 w-4" />
+                  Enable Sync Mode
+                </>
               )}
-            </>
+            </Button>
           )}
           <SessionStatusBadge status={session.status} />
         </div>

@@ -1,3 +1,11 @@
+/**
+ * DEPRECATED: This component has been replaced by HeaderSyncStatus
+ * The fixed bottom bar was removed to improve UX (avoid overlap with chat input)
+ * See: thoughts/shared/plans/2025-10-26-improve-sync-status-ux.md
+ *
+ * Kept for reference only - do not use in new code
+ */
+
 import { Circle, XCircle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useActiveSync } from '@/hooks/useActiveSync';
@@ -9,6 +17,7 @@ interface GlobalSyncStatusProps {
 }
 
 /**
+ * @deprecated Use HeaderSyncStatus instead
  * Global sync status bar - always visible at bottom
  * Design Principle #4: Transparent State - Always show sync status clearly
  * Design Principle #10: Calm Technology - Subtle but persistent indicators

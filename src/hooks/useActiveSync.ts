@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
+import { logger } from '@/utils/logger';
 
 // Shared state to prevent duplicate toasts across all hook instances
 const lastToastTime = { enable: 0, disable: 0 };
@@ -9,6 +10,7 @@ const TOAST_DEBOUNCE_MS = 100; // Prevent duplicate toasts within 100ms
 
 export interface SyncState {
   active_session_id: string | null;
+  active_session_name?: string | null;
   started_at: string | null;
   is_active: boolean;
 }
@@ -38,7 +40,7 @@ export function useActiveSync(projectId: string) {
         });
         setSyncState(status);
       } catch (err) {
-        console.error('Failed to get sync status:', err);
+        logger.error('Failed to get sync status', err as Error);
         setError(err as string);
       }
     };
@@ -53,6 +55,7 @@ export function useActiveSync(projectId: string) {
       (event) => {
         setSyncState({
           active_session_id: event.payload.session_id,
+          active_session_name: event.payload.session_name,
           started_at: new Date().toISOString(),
           is_active: true,
         });
@@ -65,6 +68,7 @@ export function useActiveSync(projectId: string) {
     const unlistenDisabled = listen<{ session_id: string }>('sync-disabled', () => {
       setSyncState({
         active_session_id: null,
+        active_session_name: null,
         started_at: null,
         is_active: false,
       });
@@ -75,7 +79,7 @@ export function useActiveSync(projectId: string) {
 
     const unlistenSwitchRequired = listen<SyncSwitchRequest>('sync-switch-required', (event) => {
       // This will be handled by useSyncSwitch hook
-      console.log('Switch required:', event.payload);
+      logger.debug('[useActiveSync] Switch required:', event.payload);
     });
 
     // Cleanup listeners

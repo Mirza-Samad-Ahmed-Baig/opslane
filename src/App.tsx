@@ -15,7 +15,7 @@ import {
 import { ChatInput } from '@/components/chat/ChatInput';
 import { SessionList } from '@/components/SessionList';
 import { CompactRepositoryBadge } from '@/components/CompactRepositoryBadge';
-import { GlobalSyncStatus } from '@/components/sync/GlobalSyncStatus';
+import { HeaderSyncStatus } from '@/components/sync/HeaderSyncStatus';
 import { ComponentShowcase } from '@/pages/ComponentShowcase';
 import { SessionDetailPage } from '@/pages/SessionDetailPage';
 import { useDockerStatus, useCreateSession, useProjects, useGetOrCreateProject } from '@/hooks';
@@ -36,6 +36,9 @@ function HomePage() {
   const { data: projects } = useProjects();
   const getOrCreateProject = useGetOrCreateProject();
   const createSession = useCreateSession();
+
+  // Use the first project for global sync status
+  const primaryProject = projects?.[0];
 
   // Track if we're currently creating a session (for button feedback only)
   const [isCreating, setIsCreating] = useState(false);
@@ -189,7 +192,10 @@ function HomePage() {
             <h1 className="text-2xl font-bold">Opslane</h1>
             <p className="text-sm text-muted-foreground">Manage your Claude development sessions</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            {/* Sync status badge - only shows when active */}
+            {primaryProject && <HeaderSyncStatus projectId={primaryProject.id} />}
+
             <Link to="/showcase">
               <Button variant="ghost" size="icon" title="Component Showcase">
                 <Palette className="h-4 w-4" />
@@ -288,13 +294,6 @@ function App() {
   // Log app mount
   logger.info('Opslane application started');
 
-  // Get projects to determine if we should show global sync status
-  const { data: projects } = useProjects();
-
-  // Use the first project for global sync status (typically there's only one)
-  // In the future, this could be enhanced with a "current project" context
-  const primaryProject = projects?.[0];
-
   // Listen for credential refresh errors on startup
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -330,8 +329,7 @@ function App() {
         <Route path="/showcase" element={<ComponentShowcase />} />
       </Routes>
 
-      {/* Global sync status bar - always visible at bottom when project exists */}
-      {primaryProject && <GlobalSyncStatus projectId={primaryProject.id} />}
+      {/* Removed: bottom sync status bar replaced with header badge */}
     </BrowserRouter>
   );
 }
