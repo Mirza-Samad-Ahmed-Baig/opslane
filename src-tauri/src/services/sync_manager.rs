@@ -3,8 +3,10 @@ use crate::services::{DockerService, SyncWatcher};
 use anyhow::Result;
 use log::{debug, info, warn};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 use tauri::{Emitter, Window};
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
@@ -18,6 +20,8 @@ pub struct SyncManager {
     docker: Arc<DockerService>,
     watcher: Arc<SyncWatcher>,
     sync_task: Arc<RwLock<Option<JoinHandle<()>>>>,
+    /// Track files recently synced from container→local to prevent sync loops
+    recently_synced_files: Arc<RwLock<HashMap<PathBuf, Instant>>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -34,6 +38,7 @@ impl SyncManager {
             docker,
             watcher: Arc::new(SyncWatcher::new()),
             sync_task: Arc::new(RwLock::new(None)),
+            recently_synced_files: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -127,6 +132,7 @@ impl SyncManager {
         let session_id_clone = session_id.to_string();
         let project_path_clone = PathBuf::from(&project.local_repo_path);
         let window_clone = window.clone();
+        let recently_synced_files = self.recently_synced_files.clone();
 
         log::debug!("🚀 Spawning sync task for session: {session_id}");
 
@@ -138,13 +144,31 @@ impl SyncManager {
             let mut sync_interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
             sync_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+            // Periodic cleanup of old entries from recently_synced_files map (every 10 seconds)
+            let mut cleanup_interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
+            cleanup_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
             loop {
                 tokio::select! {
                     // Handle local file changes → push to container
                     Some(event) = local_to_container_rx.recv() => {
                         log::debug!("📥 Received event: {:?}", event.path);
 
-                        if let Err(e) = push_file_to_container(
+                        // Check if this file was recently synced from container→local
+                        let (should_skip, elapsed_ms) = {
+                            let synced_map = recently_synced_files.read().await;
+                            if let Some(&timestamp) = synced_map.get(&event.path) {
+                                let elapsed = timestamp.elapsed();
+                                // Skip if synced within last 1 second
+                                (elapsed.as_millis() < 1000, elapsed.as_millis())
+                            } else {
+                                (false, 0)
+                            }
+                        };
+
+                        if should_skip {
+                            log::debug!("⏭️  Skipping recently synced file: {:?} (synced {}ms ago)", event.path, elapsed_ms);
+                        } else if let Err(e) = push_file_to_container(
                             &docker,
                             &db,
                             &event.session_id,
@@ -171,6 +195,8 @@ impl SyncManager {
                             &db,
                             &session_id_clone,
                             &window_clone,
+                            &project_path_clone,
+                            &recently_synced_files,
                         )
                         .await
                         {
@@ -178,6 +204,20 @@ impl SyncManager {
                             if !e.to_string().contains("no changes") {
                                 debug!("Container → local sync check: {e}");
                             }
+                        }
+                    }
+
+                    // Periodic cleanup of old entries from recently_synced_files
+                    _ = cleanup_interval.tick() => {
+                        let mut synced_map = recently_synced_files.write().await;
+                        let before_count = synced_map.len();
+
+                        // Remove entries older than 2 seconds (2x skip window for safety margin)
+                        synced_map.retain(|_, timestamp| timestamp.elapsed().as_secs() < 2);
+
+                        let removed = before_count - synced_map.len();
+                        if removed > 0 {
+                            debug!("🧹 Cleaned up {removed} entries older than 2 seconds from recently_synced_files");
                         }
                     }
 
@@ -433,8 +473,36 @@ async fn sync_container_changes_back(
     db: &Arc<Database>,
     session_id: &str,
     window: &Window,
+    project_path: &PathBuf,
+    recently_synced_files: &Arc<RwLock<HashMap<PathBuf, Instant>>>,
 ) -> Result<()> {
     use crate::services::SessionManager;
+
+    // Get session to check for changes before syncing
+    let session = db.get_session(session_id).await?;
+    let container_id = session
+        .container_id
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Session has no container"))?;
+
+    // Get list of changed files before syncing
+    let cmd = vec![
+        "git".to_string(),
+        "status".to_string(),
+        "--porcelain".to_string(),
+    ];
+
+    let output = docker
+        .exec_command_blocking(container_id, cmd, Some("/workspace/repo".to_string()), false)
+        .await?;
+
+    let mut changed_files = Vec::new();
+    for line in output.lines() {
+        if line.len() >= 4 {
+            let file_path = &line[3..];
+            changed_files.push(file_path.to_string());
+        }
+    }
 
     // Create a temporary SessionManager instance to call sync_back_to_project
     // Using default resource limits (same as AppState)
@@ -450,11 +518,28 @@ async fn sync_container_changes_back(
         .sync_back_to_project(session_id, window)
         .await?;
 
-    // Only log if files were actually synced
+    // Record all synced files to prevent sync loop
     if result.files_synced > 0 {
         info!(
             "Synced {} files from container to local ({} bytes in {}ms)",
             result.files_synced, result.bytes_synced, result.duration_ms
+        );
+
+        // Record all changed files as recently synced
+        let now = Instant::now();
+        let mut synced_map = recently_synced_files.write().await;
+        for file_path in changed_files {
+            let full_path = project_path.join(&file_path);
+
+            // Try to canonicalize the path to match file watcher paths
+            // If canonicalization fails (e.g., file was deleted), use the joined path
+            let normalized_path = full_path.canonicalize().unwrap_or(full_path);
+
+            synced_map.insert(normalized_path, now);
+        }
+        debug!(
+            "Recorded {} files as recently synced to prevent loop",
+            synced_map.len()
         );
     }
 
