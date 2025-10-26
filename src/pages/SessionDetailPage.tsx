@@ -374,7 +374,7 @@ export function SessionDetailPage() {
       "
       >
         {/* Session list - hidden on mobile, visible on tablet+ */}
-        <div className="hidden md:block h-full">
+        <div className="hidden md:block overflow-hidden">
           <SessionList activeSessionId={session.id} />
         </div>
 
