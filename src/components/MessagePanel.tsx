@@ -496,7 +496,7 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
       <div
         ref={parentRef}
         className="flex-1 overflow-y-auto"
-        style={{ overscrollBehavior: 'contain' }}
+        style={{ overscrollBehavior: 'contain', scrollbarGutter: 'stable' }}
       >
         {isLoading ? (
           <div className="flex h-full items-center justify-center text-muted-foreground">
@@ -642,28 +642,33 @@ export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: Mess
         )}
       </div>
 
-      {/* Chat input */}
-      <ChatInput
-        sessionId={sessionId}
-        onSend={sendMessageWithModel}
-        disabled={
-          isSending ||
-          isLoading ||
-          isSettingUp ||
-          isWaitingForClaudeResponse ||
-          hasStreamingMessages
-        }
-        placeholder={
-          isSettingUp
-            ? 'Setting up session...'
-            : isWaitingForClaudeResponse || hasStreamingMessages
-              ? 'Claude is thinking...'
-              : waitingTimeout || streamingTimeout
-                ? 'Timed out - try sending a new message'
-                : 'Ask Claude to help with your code...'
-        }
-        modelControl={modelSelector}
-      />
+      {/* Chat input - responsive spacing for sidebar and sync bar clearance
+          px-4 (mobile): 16px horizontal padding
+          md:px-6 (tablet+): 24px horizontal padding for better balance with sidebars
+          pb-12: 48px bottom padding (clears 28px GlobalSyncStatus bar + 20px breathing room) */}
+      <div className="px-4 md:px-6 pb-12">
+        <ChatInput
+          sessionId={sessionId}
+          onSend={sendMessageWithModel}
+          disabled={
+            isSending ||
+            isLoading ||
+            isSettingUp ||
+            isWaitingForClaudeResponse ||
+            hasStreamingMessages
+          }
+          placeholder={
+            isSettingUp
+              ? 'Setting up session...'
+              : isWaitingForClaudeResponse || hasStreamingMessages
+                ? 'Claude is thinking...'
+                : waitingTimeout || streamingTimeout
+                  ? 'Timed out - try sending a new message'
+                  : 'Ask Claude to help with your code...'
+          }
+          modelControl={modelSelector}
+        />
+      </div>
     </div>
   );
 }
