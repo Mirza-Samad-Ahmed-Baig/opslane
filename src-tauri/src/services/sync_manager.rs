@@ -1,7 +1,7 @@
 use crate::database::Database;
 use crate::services::{DockerService, SyncWatcher};
 use anyhow::Result;
-use log::{debug, error, info, warn};
+use log::{debug, info, warn};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -128,6 +128,8 @@ impl SyncManager {
         let project_path_clone = PathBuf::from(&project.local_repo_path);
         let window_clone = window.clone();
 
+        log::debug!("🚀 Spawning sync task for session: {}", session_id);
+
         let task_handle = tokio::spawn(async move {
             // Channel for local → container sync
             let mut local_to_container_rx = rx;
@@ -140,7 +142,7 @@ impl SyncManager {
                 tokio::select! {
                     // Handle local file changes → push to container
                     Some(event) = local_to_container_rx.recv() => {
-                        debug!("Processing local → container file event: {:?}", event.path);
+                        log::debug!("📥 Received event: {:?}", event.path);
 
                         if let Err(e) = push_file_to_container(
                             &docker,
@@ -151,7 +153,9 @@ impl SyncManager {
                         )
                         .await
                         {
-                            error!("Failed to push file to container: {e}");
+                            log::error!("❌ Push failed: {e}");
+                        } else {
+                            log::debug!("✅ Push succeeded: {:?}", event.path);
                         }
                     }
 
@@ -319,6 +323,8 @@ async fn push_file_to_container(
         ));
     }
 
+    log::debug!("✅ Path validated: {:?}", canonical_file);
+
     // Get relative path (now safe after validation)
     let rel_path = canonical_file
         .strip_prefix(&canonical_project)
@@ -326,6 +332,8 @@ async fn push_file_to_container(
 
     // Check if file exists (might be deleted)
     if !file_path.exists() {
+        log::debug!("🗑️  File deleted, removing from container");
+
         // Handle file deletion
         let container_path = format!("/workspace/repo/{}", rel_path.display());
 
@@ -344,6 +352,8 @@ async fn push_file_to_container(
     let metadata = tokio::fs::metadata(file_path)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to read file metadata: {e}"))?;
+
+    log::debug!("📏 Size: {} bytes", metadata.len());
 
     if metadata.len() > MAX_SYNC_FILE_SIZE {
         warn!(
@@ -364,9 +374,13 @@ async fn push_file_to_container(
         .await
         .map_err(|e| anyhow::anyhow!("Failed to read file: {e}"))?;
 
+    log::debug!("📖 Read {} bytes", content.len());
+
     // Push to container using base64
     use base64::Engine;
     let encoded = base64::engine::general_purpose::STANDARD.encode(&content);
+
+    log::debug!("🔐 Encoded to {} chars", encoded.len());
 
     let container_path = format!("/workspace/repo/{}", rel_path.display());
 
@@ -376,12 +390,16 @@ async fn push_file_to_container(
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "/workspace/repo".to_string());
 
+    log::debug!("📁 Creating dir: {}", parent_dir);
+
     // Use mkdir directly without shell
     let mkdir_cmd = vec!["mkdir".to_string(), "-p".to_string(), parent_dir];
 
     docker
         .exec_command_blocking(&container_id, mkdir_cmd, None, false)
         .await?;
+
+    log::debug!("📝 Writing to container: {}", container_path);
 
     // Write file directly using tee (avoids shell interpretation of file content)
     let write_cmd = vec![
@@ -398,6 +416,8 @@ async fn push_file_to_container(
     docker
         .exec_command_blocking(&container_id, write_cmd, Some(encoded), false)
         .await?;
+
+    log::debug!("✅ Written successfully");
 
     debug!(
         "Pushed file to container: {} -> {}",

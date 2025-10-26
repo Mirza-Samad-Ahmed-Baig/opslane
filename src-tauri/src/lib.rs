@@ -37,12 +37,7 @@ pub fn run() {
     // Configure logging via Tauri plugin
     use log::LevelFilter;
 
-    #[allow(clippy::if_same_then_else)]
-    let log_level = if cfg!(debug_assertions) {
-        LevelFilter::Info // Changed from Debug to Info
-    } else {
-        LevelFilter::Info
-    };
+    let log_level = LevelFilter::Debug;  // Temporarily set to Debug for sync diagnostics
 
     tauri::Builder::default()
         .plugin(

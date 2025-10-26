@@ -560,6 +560,16 @@ impl DockerService {
     ) -> Result<String> {
         const MAX_OUTPUT_SIZE: usize = 10 * 1024 * 1024; // 10MB limit
 
+        log::debug!("🐳 Exec on {}: {:?}", &container_id[..12], cmd);
+        if let Some(ref content) = working_dir {
+            // Could be working_dir or stdin content (base64)
+            if content.len() > 100 {
+                log::debug!("   Stdin/WorkDir: {} bytes", content.len());
+            } else {
+                log::debug!("   Stdin/WorkDir: {}", content);
+            }
+        }
+
         let (exec_id, mut stream) = self
             .exec_command(container_id, cmd.clone(), working_dir, as_root)
             .await?;
