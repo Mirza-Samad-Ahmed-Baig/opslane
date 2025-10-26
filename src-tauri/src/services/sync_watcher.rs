@@ -73,29 +73,27 @@ impl SyncWatcher {
 
         let mut debouncer = new_debouncer(
             Duration::from_millis(100),
-            move |res: DebounceEventResult| {
-                match res {
-                    Ok(events) => {
-                        log::debug!("📁 Detected {} event(s)", events.len());
-                        for event in events {
-                            log::debug!("  Event: {:?} - {:?}", event.kind, event.path);
+            move |res: DebounceEventResult| match res {
+                Ok(events) => {
+                    log::debug!("📁 Detected {} event(s)", events.len());
+                    for event in events {
+                        log::debug!("  Event: {:?} - {:?}", event.kind, event.path);
 
-                            if should_ignore(&event.path) {
-                                log::debug!("  ⏭️  Ignored: {:?}", event.path);
-                                continue;
-                            }
-
-                            let _ = tx_clone.send(FileChangeEvent {
-                                session_id: session_id_clone.clone(),
-                                path: event.path.clone(),
-                                kind: FileChangeKind::Modify,
-                            });
-                            log::debug!("  ✅ Sent to channel: {:?}", event.path);
+                        if should_ignore(&event.path) {
+                            log::debug!("  ⏭️  Ignored: {:?}", event.path);
+                            continue;
                         }
+
+                        let _ = tx_clone.send(FileChangeEvent {
+                            session_id: session_id_clone.clone(),
+                            path: event.path.clone(),
+                            kind: FileChangeKind::Modify,
+                        });
+                        log::debug!("  ✅ Sent to channel: {:?}", event.path);
                     }
-                    Err(err) => {
-                        log::error!("❌ Watcher error: {err:?}");
-                    }
+                }
+                Err(err) => {
+                    log::error!("❌ Watcher error: {err:?}");
                 }
             },
         )
@@ -107,7 +105,7 @@ impl SyncWatcher {
             .watch(&project_path, RecursiveMode::Recursive)
             .map_err(|e| anyhow::anyhow!("Failed to watch directory: {e}"))?;
 
-        log::debug!("👀 Watcher started for session {} at {:?}", session_id, project_path);
+        log::debug!("👀 Watcher started for session {session_id} at {project_path:?}");
 
         // Update state
         *self.active_session.write().await = Some(ActiveSyncState {

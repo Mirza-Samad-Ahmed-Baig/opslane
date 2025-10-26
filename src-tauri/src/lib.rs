@@ -37,7 +37,7 @@ pub fn run() {
     // Configure logging via Tauri plugin
     use log::LevelFilter;
 
-    let log_level = LevelFilter::Debug;  // Temporarily set to Debug for sync diagnostics
+    let log_level = LevelFilter::Debug; // Temporarily set to Debug for sync diagnostics
 
     tauri::Builder::default()
         .plugin(

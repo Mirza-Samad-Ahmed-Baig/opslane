@@ -128,7 +128,7 @@ impl SyncManager {
         let project_path_clone = PathBuf::from(&project.local_repo_path);
         let window_clone = window.clone();
 
-        log::debug!("🚀 Spawning sync task for session: {}", session_id);
+        log::debug!("🚀 Spawning sync task for session: {session_id}");
 
         let task_handle = tokio::spawn(async move {
             // Channel for local → container sync
@@ -323,7 +323,7 @@ async fn push_file_to_container(
         ));
     }
 
-    log::debug!("✅ Path validated: {:?}", canonical_file);
+    log::debug!("✅ Path validated: {canonical_file:?}");
 
     // Get relative path (now safe after validation)
     let rel_path = canonical_file
@@ -390,7 +390,7 @@ async fn push_file_to_container(
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "/workspace/repo".to_string());
 
-    log::debug!("📁 Creating dir: {}", parent_dir);
+    log::debug!("📁 Creating dir: {parent_dir}");
 
     // Use mkdir directly without shell
     let mkdir_cmd = vec!["mkdir".to_string(), "-p".to_string(), parent_dir];
@@ -399,7 +399,7 @@ async fn push_file_to_container(
         .exec_command_blocking(&container_id, mkdir_cmd, None, false)
         .await?;
 
-    log::debug!("📝 Writing to container: {}", container_path);
+    log::debug!("📝 Writing to container: {container_path}");
 
     // Write file directly using tee (avoids shell interpretation of file content)
     let write_cmd = vec![

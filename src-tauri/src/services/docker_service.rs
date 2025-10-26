@@ -464,7 +464,9 @@ impl DockerService {
             return Err(anyhow!("Command cannot be empty"));
         }
 
-        let allowed_commands = ["claude", "cat", "sh", "ls", "echo", "chown", "git"];
+        let allowed_commands = [
+            "claude", "cat", "sh", "ls", "echo", "chown", "git", "mkdir", "rm", "base64", "tee",
+        ];
         let command_name = &cmd[0];
 
         if !allowed_commands.contains(&command_name.as_str()) {
@@ -560,13 +562,14 @@ impl DockerService {
     ) -> Result<String> {
         const MAX_OUTPUT_SIZE: usize = 10 * 1024 * 1024; // 10MB limit
 
-        log::debug!("🐳 Exec on {}: {:?}", &container_id[..12], cmd);
+        log::debug!("🐳 Exec on {}: {cmd:?}", &container_id[..12]);
         if let Some(ref content) = working_dir {
             // Could be working_dir or stdin content (base64)
             if content.len() > 100 {
-                log::debug!("   Stdin/WorkDir: {} bytes", content.len());
+                let len = content.len();
+                log::debug!("   Stdin/WorkDir: {len} bytes");
             } else {
-                log::debug!("   Stdin/WorkDir: {}", content);
+                log::debug!("   Stdin/WorkDir: {content}");
             }
         }
 
