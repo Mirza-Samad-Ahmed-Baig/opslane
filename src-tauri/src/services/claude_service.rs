@@ -195,7 +195,13 @@ impl ClaudeService {
         // ✅ NEW: Use exec_command for streaming output (like Opcode does)
         let (_exec_id, stream) = self
             .docker
-            .exec_command(&container_id, cmd, Some(WORKSPACE_PATH.to_string()), false)
+            .exec_command(
+                &container_id,
+                cmd,
+                Some(WORKSPACE_PATH.to_string()),
+                None,
+                false,
+            )
             .await?;
 
         // ✅ NEW: Stream Docker stdout directly (like Opcode streams process stdout)
@@ -270,7 +276,7 @@ impl ClaudeService {
 
                 match self
                     .docker
-                    .exec_command_blocking(&container_id, cmd, None, false)
+                    .exec_command_blocking(&container_id, cmd, None, None, false)
                     .await
                 {
                     Ok(path) if !path.trim().is_empty() => {
@@ -320,7 +326,7 @@ impl ClaudeService {
 
         let output = self
             .docker
-            .exec_command_blocking(&container_id, cmd, None, false)
+            .exec_command_blocking(&container_id, cmd, None, None, false)
             .await
             .map_err(|e| anyhow!("Failed to read session file {session_file_path}: {e}"))?;
 
@@ -390,7 +396,7 @@ impl ClaudeService {
 
         let output = self
             .docker
-            .exec_command_blocking(container_id, cmd, None, false)
+            .exec_command_blocking(container_id, cmd, None, None, false)
             .await
             .map_err(|e| anyhow!("Failed to list session files in {projects_dir}: {e}"))?;
 

@@ -223,7 +223,7 @@ impl DockerService {
         let cmd = vec!["sh".to_string(), "-c".to_string(), setup_cmd];
 
         // Execute as claude user (not root)
-        self.exec_command_blocking(container_id, cmd, None, false)
+        self.exec_command_blocking(container_id, cmd, None, None, false)
             .await
             .map_err(|e| anyhow!("Failed to setup credentials: {e}"))?;
 
@@ -243,7 +243,7 @@ impl DockerService {
         ];
 
         match self
-            .exec_command_blocking(container_id, cmd, None, false)
+            .exec_command_blocking(container_id, cmd, None, None, false)
             .await
         {
             Ok(output) => {
@@ -269,7 +269,7 @@ impl DockerService {
             WORKSPACE_PATH.to_string(),
         ];
 
-        self.exec_command_blocking(container_id, cmd, None, false)
+        self.exec_command_blocking(container_id, cmd, None, None, false)
             .await
             .map_err(|e| anyhow!("Failed to configure git safe.directory: {e}"))?;
 
@@ -305,6 +305,7 @@ impl DockerService {
                     container_id,
                     check_cmd,
                     Some("/workspace/repo".to_string()),
+                    None,
                     false,
                 )
                 .await
@@ -350,6 +351,7 @@ impl DockerService {
             container_id,
             reset_cmd,
             Some("/workspace/repo".to_string()),
+            None,
             false,
         )
         .await
@@ -367,6 +369,7 @@ impl DockerService {
             container_id,
             clean_cmd,
             Some("/workspace/repo".to_string()),
+            None,
             false,
         )
         .await
@@ -445,6 +448,7 @@ impl DockerService {
     /// * `container_id` - The container ID
     /// * `cmd` - Command to execute as vector of strings (e.g., vec!["claude", "chat", "Hello"])
     /// * `working_dir` - Optional working directory (defaults to container's WORKDIR)
+    /// * `stdin` - Optional stdin content to pipe to the command
     /// * `as_root` - Run command as root user (default: false, runs as container's default user)
     ///
     /// # Returns
@@ -457,6 +461,7 @@ impl DockerService {
         container_id: &str,
         cmd: Vec<String>,
         working_dir: Option<String>,
+        stdin: Option<String>,
         as_root: bool,
     ) -> Result<(String, impl futures_util::Stream<Item = Result<String>>)> {
         // SECURITY: Validate command is in whitelist
@@ -475,8 +480,10 @@ impl DockerService {
             ));
         }
 
-        // Create exec instance
+        // Create exec instance with stdin if needed
+        let attach_stdin = stdin.is_some();
         let exec_config = CreateExecOptions {
+            attach_stdin: Some(attach_stdin),
             attach_stdout: Some(true),
             attach_stderr: Some(true),
             tty: Some(false), // No TTY for easier parsing
@@ -499,7 +506,7 @@ impl DockerService {
         let exec_id = exec.id.clone();
         log::debug!("Created exec {exec_id} for command: {cmd:?}");
 
-        // Start exec and get output stream
+        // Start exec
         let stream = self
             .client
             .start_exec(&exec_id, None)
@@ -548,8 +555,124 @@ impl DockerService {
         Ok(exec_info.exit_code)
     }
 
+    /// Execute a command with stdin input (internal helper)
+    async fn exec_with_stdin(
+        &self,
+        container_id: &str,
+        cmd: Vec<String>,
+        working_dir: Option<String>,
+        stdin_content: String,
+        as_root: bool,
+    ) -> Result<String> {
+        use tokio::io::AsyncWriteExt;
+
+        const MAX_OUTPUT_SIZE: usize = 10 * 1024 * 1024; // 10MB limit
+
+        // SECURITY: Validate command is in whitelist
+        if cmd.is_empty() {
+            return Err(anyhow!("Command cannot be empty"));
+        }
+
+        let allowed_commands = [
+            "claude", "cat", "sh", "ls", "echo", "chown", "git", "mkdir", "rm", "base64", "tee",
+        ];
+        let command_name = &cmd[0];
+
+        if !allowed_commands.contains(&command_name.as_str()) {
+            return Err(anyhow!(
+                "Command '{command_name}' not allowed. Allowed commands: {allowed_commands:?}"
+            ));
+        }
+
+        // Create exec instance with stdin attached
+        let exec_config = CreateExecOptions {
+            attach_stdin: Some(true),
+            attach_stdout: Some(true),
+            attach_stderr: Some(true),
+            tty: Some(false),
+            cmd: Some(cmd.clone()),
+            working_dir,
+            user: if as_root {
+                Some("root".to_string())
+            } else {
+                None
+            },
+            ..Default::default()
+        };
+
+        let exec = self
+            .client
+            .create_exec(container_id, exec_config)
+            .await
+            .map_err(|e| anyhow!("Failed to create exec instance: {e}"))?;
+
+        let exec_id = exec.id.clone();
+
+        // Start exec
+        let stream = self
+            .client
+            .start_exec(&exec_id, None)
+            .await
+            .map_err(|e| anyhow!("Failed to start exec: {e}"))?;
+
+        // Handle stdin/stdout
+        let (mut output, mut input) = match stream {
+            StartExecResults::Attached { output, input } => (output, input),
+            _ => return Err(anyhow!("Exec stream not attached")),
+        };
+
+        // Write stdin content and close
+        input
+            .write_all(stdin_content.as_bytes())
+            .await
+            .map_err(|e| anyhow!("Failed to write stdin: {e}"))?;
+        input
+            .shutdown()
+            .await
+            .map_err(|e| anyhow!("Failed to close stdin: {e}"))?;
+
+        // Collect output
+        let mut result = String::new();
+        while let Some(chunk) = output.next().await {
+            let chunk = chunk.map_err(|e| anyhow!("Stream error: {e}"))?;
+
+            let chunk_str = match chunk {
+                LogOutput::StdOut { message } => String::from_utf8_lossy(&message).to_string(),
+                LogOutput::StdErr { message } => String::from_utf8_lossy(&message).to_string(),
+                LogOutput::Console { message } => String::from_utf8_lossy(&message).to_string(),
+                _ => String::new(),
+            };
+
+            if result.len() + chunk_str.len() > MAX_OUTPUT_SIZE {
+                return Err(anyhow!(
+                    "Command output exceeded maximum size of {MAX_OUTPUT_SIZE} bytes"
+                ));
+            }
+
+            result.push_str(&chunk_str);
+        }
+
+        // Check exit code
+        if let Ok(Some(exit_code)) = self.inspect_exec(&exec_id).await {
+            if exit_code != 0 {
+                return Err(anyhow!(
+                    "Command failed with exit code {exit_code}. Output: {result}"
+                ));
+            }
+        }
+
+        Ok(result)
+    }
+
     /// Execute a command in a container and wait for completion (non-streaming)
     /// Useful for short commands where you want the full output
+    ///
+    /// # Arguments
+    /// * `container_id` - The container ID
+    /// * `cmd` - Command to execute as vector of strings
+    /// * `working_dir` - Optional working directory (absolute path)
+    /// * `stdin` - Optional stdin content to pipe to the command
+    /// * `as_root` - Run command as root user
     ///
     /// # Security
     /// Limits output to 10MB to prevent memory exhaustion attacks
@@ -558,23 +681,34 @@ impl DockerService {
         container_id: &str,
         cmd: Vec<String>,
         working_dir: Option<String>,
+        stdin: Option<String>,
         as_root: bool,
     ) -> Result<String> {
         const MAX_OUTPUT_SIZE: usize = 10 * 1024 * 1024; // 10MB limit
 
         log::debug!("🐳 Exec on {}: {cmd:?}", &container_id[..12]);
-        if let Some(ref content) = working_dir {
-            // Could be working_dir or stdin content (base64)
+        if let Some(ref dir) = working_dir {
+            log::debug!("   WorkDir: {dir}");
+        }
+        if let Some(ref content) = stdin {
             if content.len() > 100 {
                 let len = content.len();
-                log::debug!("   Stdin/WorkDir: {len} bytes");
+                log::debug!("   Stdin: {len} bytes");
             } else {
-                log::debug!("   Stdin/WorkDir: {content}");
+                log::debug!("   Stdin: {content}");
             }
         }
 
+        // If stdin is provided, use a different code path
+        if let Some(stdin_content) = stdin {
+            return self
+                .exec_with_stdin(container_id, cmd, working_dir, stdin_content, as_root)
+                .await;
+        }
+
+        // No stdin - use regular exec
         let (exec_id, mut stream) = self
-            .exec_command(container_id, cmd.clone(), working_dir, as_root)
+            .exec_command(container_id, cmd.clone(), working_dir, None, as_root)
             .await?;
 
         let mut output = String::new();
@@ -763,6 +897,7 @@ mod tests {
             .exec_command_blocking(
                 &container_id,
                 vec!["echo".into(), "Hello".into()],
+                None,
                 None,
                 false,
             )

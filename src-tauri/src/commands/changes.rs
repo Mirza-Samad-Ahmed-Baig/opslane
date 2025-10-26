@@ -38,6 +38,7 @@ pub async fn get_session_changes(
                 "--porcelain".to_string(),
             ],
             Some("/workspace/repo".to_string()),
+            None,
             false,
         )
         .await
@@ -84,6 +85,7 @@ pub async fn get_session_changes(
                             path.to_string(),
                         ],
                         Some("/workspace/repo".to_string()),
+                        None,
                         false,
                     )
                     .await;
@@ -98,6 +100,7 @@ pub async fn get_session_changes(
                                 &container_id,
                                 vec!["cat".to_string(), path.to_string()],
                                 Some("/workspace/repo".to_string()),
+                                None,
                                 false,
                             )
                             .await
@@ -128,6 +131,7 @@ pub async fn get_session_changes(
                             format!("HEAD:{}", path),
                         ],
                         Some("/workspace/repo".to_string()),
+                        None,
                         false,
                     )
                     .await
@@ -158,6 +162,7 @@ pub async fn get_session_changes(
                             path.to_string(),
                         ],
                         Some("/workspace/repo".to_string()),
+                        None,
                         false,
                     )
                     .await

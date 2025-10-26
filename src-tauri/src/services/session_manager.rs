@@ -1257,7 +1257,7 @@ impl SessionManager {
 
         let encoded_content = self
             .docker
-            .exec_command_blocking(container_id, cmd, None, false)
+            .exec_command_blocking(container_id, cmd, None, None, false)
             .await?;
 
         // Decode base64 content (remove all whitespace including newlines)
@@ -1298,6 +1298,7 @@ impl SessionManager {
                 container_id,
                 cmd,
                 Some("/workspace/repo".to_string()),
+                None,
                 false,
             )
             .await?;

@@ -381,7 +381,7 @@ async fn push_file_to_container(
         let rm_cmd = vec!["rm".to_string(), "-f".to_string(), container_path.clone()];
 
         docker
-            .exec_command_blocking(&container_id, rm_cmd, None, false)
+            .exec_command_blocking(&container_id, rm_cmd, None, None, false)
             .await?;
 
         debug!("Removed file from container: {container_path}");
@@ -436,7 +436,7 @@ async fn push_file_to_container(
     let mkdir_cmd = vec!["mkdir".to_string(), "-p".to_string(), parent_dir];
 
     docker
-        .exec_command_blocking(&container_id, mkdir_cmd, None, false)
+        .exec_command_blocking(&container_id, mkdir_cmd, None, None, false)
         .await?;
 
     log::debug!("📝 Writing to container: {container_path}");
@@ -454,7 +454,7 @@ async fn push_file_to_container(
 
     // Pass the base64 content via stdin to avoid command line length limits and injection
     docker
-        .exec_command_blocking(&container_id, write_cmd, Some(encoded), false)
+        .exec_command_blocking(&container_id, write_cmd, None, Some(encoded), false)
         .await?;
 
     log::debug!("✅ Written successfully");
@@ -473,7 +473,7 @@ async fn sync_container_changes_back(
     db: &Arc<Database>,
     session_id: &str,
     window: &Window,
-    project_path: &PathBuf,
+    project_path: &Path,
     recently_synced_files: &Arc<RwLock<HashMap<PathBuf, Instant>>>,
 ) -> Result<()> {
     use crate::services::SessionManager;
@@ -493,7 +493,13 @@ async fn sync_container_changes_back(
     ];
 
     let output = docker
-        .exec_command_blocking(container_id, cmd, Some("/workspace/repo".to_string()), false)
+        .exec_command_blocking(
+            container_id,
+            cmd,
+            Some("/workspace/repo".to_string()),
+            None,
+            false,
+        )
         .await?;
 
     let mut changed_files = Vec::new();
