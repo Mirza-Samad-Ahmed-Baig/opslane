@@ -31,6 +31,14 @@ pub struct SyncStatusResponse {
     pub is_active: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitResult {
+    pub commit_hash: String,
+    pub files_changed: usize,
+    pub success: bool,
+}
+
 impl SyncManager {
     pub fn new(db: Arc<Database>, docker: Arc<DockerService>) -> Self {
         Self {
@@ -330,6 +338,158 @@ impl SyncManager {
     /// Check if a specific session is actively syncing
     pub async fn is_session_active(&self, session_id: &str) -> bool {
         self.watcher.is_session_active(session_id).await
+    }
+
+    /// Commit session changes to local repository
+    ///
+    /// This pauses sync, creates commit, resets container, then resumes sync
+    pub async fn commit_session_changes_to_local(
+        &self,
+        session_id: &str,
+        commit_message: &str,
+        window: &Window,
+    ) -> Result<CommitResult> {
+        info!("Starting commit to local for session: {}", session_id);
+
+        // 1. Get session and project info
+        let session = self.db.get_session(session_id).await?;
+        let project = self.db.get_project(&session.project_id).await?;
+        let project_path = PathBuf::from(&project.local_repo_path);
+
+        // 2. Check if sync is active
+        let sync_was_active = session.is_sync_active;
+
+        // 3. Disable sync if active (with state snapshot)
+        if sync_was_active {
+            info!("Disabling sync before commit");
+            self.disable_all_sync(&project.id, window).await?;
+
+            // Wait for sync task to fully stop
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        }
+
+        // 4. Sync container changes to local one final time
+        info!("Syncing container changes to local before commit");
+        let session_manager = crate::services::SessionManager::new(
+            self.db.clone(),
+            self.docker.clone(),
+            1.0,  // default cpu limit
+            2048, // default memory limit
+        );
+
+        let sync_result = session_manager
+            .sync_back_to_project(session_id, window)
+            .await?;
+
+        if !sync_result.files_failed.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Failed to sync {} files before commit",
+                sync_result.files_failed.len()
+            ));
+        }
+
+        // 5. Get git user config
+        let (user_name, user_email) = self.docker.detect_local_git_user().await?;
+
+        // 6. Stage all changes on local
+        info!("Staging changes on local repository");
+        self.docker
+            .exec_git_on_local(&project_path, vec!["add", "."])
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to stage changes: {}", e))?;
+
+        // 7. Create commit on local
+        info!("Creating commit on local repository");
+
+        // Build git -c arguments to set user config for this commit
+        // This ensures git knows both author and committer identity
+        let user_name_config = format!("user.name={}", user_name);
+        let user_email_config = format!("user.email={}", user_email);
+
+        let commit_output = self
+            .docker
+            .exec_git_on_local(
+                &project_path,
+                vec![
+                    "-c",
+                    &user_name_config,
+                    "-c",
+                    &user_email_config,
+                    "commit",
+                    "--no-verify",
+                    "-m",
+                    commit_message,
+                ],
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create commit: {}", e))?;
+
+        info!("Commit created: {}", commit_output);
+
+        // 8. Get commit hash
+        let commit_hash = self
+            .docker
+            .exec_git_on_local(&project_path, vec!["rev-parse", "HEAD"])
+            .await?
+            .trim()
+            .to_string();
+
+        // 9. Get file count from git show
+        let files_output = self
+            .docker
+            .exec_git_on_local(
+                &project_path,
+                vec!["show", "--name-only", "--format=", "HEAD"],
+            )
+            .await?;
+
+        let files_changed = files_output.lines().filter(|l| !l.is_empty()).count();
+
+        // 10. Reset container to match local
+        info!("Resetting container to match local repository");
+        let container_id = &session.container_id.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("Session has no container")
+        })?;
+
+        self.docker
+            .exec_command_blocking(
+                container_id,
+                vec!["git".to_string(), "reset".to_string(), "--hard".to_string(), "HEAD".to_string()],
+                Some("/workspace/repo".to_string()),
+                None,
+                false,
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to reset container: {}", e))?;
+
+        self.docker
+            .exec_command_blocking(
+                container_id,
+                vec!["git".to_string(), "clean".to_string(), "-fd".to_string()],
+                Some("/workspace/repo".to_string()),
+                None,
+                false,
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to clean container: {}", e))?;
+
+        // 11. Re-enable sync if it was active
+        if sync_was_active {
+            info!("Re-enabling sync after commit");
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+            self.enable_sync(session_id, window)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to re-enable sync after commit: {}", e))?;
+        }
+
+        info!("Commit completed successfully: {}", commit_hash);
+
+        Ok(CommitResult {
+            commit_hash,
+            files_changed,
+            success: true,
+        })
     }
 }
 

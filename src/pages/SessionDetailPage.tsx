@@ -353,7 +353,7 @@ export function SessionDetailPage() {
 
         {/* Diff viewer - hidden on mobile/tablet, visible on desktop */}
         <div className="hidden lg:block">
-          <DiffViewer sessionId={session.id} />
+          <DiffViewer sessionId={session.id} projectId={session.project_id} />
         </div>
       </div>
 

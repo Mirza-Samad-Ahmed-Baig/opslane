@@ -277,6 +277,130 @@ impl DockerService {
         Ok(())
     }
 
+    /// Detect git user configuration from local system
+    ///
+    /// Returns (name, email) tuple or error if not configured
+    pub async fn detect_local_git_user(&self) -> Result<(String, String)> {
+        use tokio::process::Command;
+
+        log::debug!("Detecting local git user configuration");
+
+        // Get user.name
+        let name_output = Command::new("git")
+            .args(["config", "--global", "user.name"])
+            .output()
+            .await
+            .map_err(|e| anyhow!("Failed to execute git config for user.name: {e}"))?;
+
+        if !name_output.status.success() {
+            return Err(anyhow!(
+                "Git user.name not configured. Run: git config --global user.name \"Your Name\""
+            ));
+        }
+
+        let name = String::from_utf8_lossy(&name_output.stdout)
+            .trim()
+            .to_string();
+
+        if name.is_empty() {
+            return Err(anyhow!("Git user.name is empty"));
+        }
+
+        // Get user.email
+        let email_output = Command::new("git")
+            .args(["config", "--global", "user.email"])
+            .output()
+            .await
+            .map_err(|e| anyhow!("Failed to execute git config for user.email: {e}"))?;
+
+        if !email_output.status.success() {
+            return Err(anyhow!(
+                "Git user.email not configured. Run: git config --global user.email \"you@example.com\""
+            ));
+        }
+
+        let email = String::from_utf8_lossy(&email_output.stdout)
+            .trim()
+            .to_string();
+
+        if email.is_empty() {
+            return Err(anyhow!("Git user.email is empty"));
+        }
+
+        log::info!("Detected git user: {} <{}>", name, email);
+        Ok((name, email))
+    }
+
+    /// Execute git command on local filesystem (NOT in container)
+    ///
+    /// Used for operations on the project's local repository
+    ///
+    /// # Arguments
+    /// * `project_path` - Path to local project directory
+    /// * `args` - Git command arguments (e.g., vec!["status", "--porcelain"])
+    ///
+    /// # Returns
+    /// Stdout from git command on success
+    ///
+    /// # Errors
+    /// Returns error if git command fails or returns non-zero exit code
+    pub async fn exec_git_on_local(
+        &self,
+        project_path: &std::path::Path,
+        args: Vec<&str>,
+    ) -> Result<String> {
+        use tokio::process::Command;
+        use tokio::time::{timeout, Duration};
+        use std::process::Stdio;
+
+        log::debug!("Executing git command on local: git {}", args.join(" "));
+        log::debug!("  Working directory: {}", project_path.display());
+
+        // Add timeout and ensure stdin is null to prevent hanging
+        let result = timeout(
+            Duration::from_secs(30),
+            Command::new("git")
+                .current_dir(project_path)
+                .args(&args)
+                .stdin(Stdio::null())  // Don't wait for stdin
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+        ).await;
+
+        let output = match result {
+            Ok(Ok(output)) => {
+                log::debug!("  Command completed successfully");
+                output
+            },
+            Ok(Err(e)) => {
+                log::error!("  Failed to execute git command: {}", e);
+                return Err(anyhow!("Failed to execute git command on local: {e}"));
+            },
+            Err(_) => {
+                log::error!("  Git command timed out after 30 seconds");
+                return Err(anyhow!("Git command timed out after 30 seconds"));
+            }
+        };
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        log::debug!("  Exit code: {}", output.status.code().unwrap_or(-1));
+        if !stdout.is_empty() {
+            log::debug!("  Stdout: {}", stdout.trim());
+        }
+        if !stderr.is_empty() {
+            log::debug!("  Stderr: {}", stderr.trim());
+        }
+
+        if !output.status.success() {
+            return Err(anyhow!("Git command failed: {}", stderr));
+        }
+
+        Ok(stdout.to_string())
+    }
+
     /// Reset repository to last committed state
     ///
     /// Discards all uncommitted changes (staged and unstaged) and removes

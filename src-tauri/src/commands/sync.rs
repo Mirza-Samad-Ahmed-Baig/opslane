@@ -111,3 +111,69 @@ pub async fn is_session_syncing(
 
     Ok(state.sync_manager.is_session_active(&session_id).await)
 }
+
+// ============================================================================
+// Git User Configuration Commands
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetGitUserRequest {
+    pub project_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitUserResponse {
+    pub name: String,
+    pub email: String,
+}
+
+/// Get git user configuration from local system
+#[tauri::command]
+pub async fn get_git_user_config(
+    _request: GetGitUserRequest,
+    state: State<'_, AppState>,
+) -> Result<GitUserResponse, String> {
+    log::debug!("Command: get_git_user_config");
+
+    let docker = &state.docker;
+
+    match docker.detect_local_git_user().await {
+        Ok((name, email)) => Ok(GitUserResponse { name, email }),
+        Err(e) => Err(format!("Git user not configured: {}", e)),
+    }
+}
+
+// ============================================================================
+// Commit to Local Commands
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitToLocalRequest {
+    pub session_id: String,
+    pub commit_message: String,
+}
+
+/// Commit session changes to local repository
+#[tauri::command]
+pub async fn commit_session_to_local(
+    request: CommitToLocalRequest,
+    state: State<'_, AppState>,
+    window: Window,
+) -> Result<crate::services::sync_manager::CommitResult, String> {
+    log::info!(
+        "Command: commit_session_to_local for session {}",
+        request.session_id
+    );
+
+    state
+        .sync_manager
+        .commit_session_changes_to_local(&request.session_id, &request.commit_message, &window)
+        .await
+        .map_err(|e| {
+            log::error!("Failed to commit changes: {e}");
+            format!("Failed to commit changes: {}", e)
+        })
+}

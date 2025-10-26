@@ -1,10 +1,13 @@
 import { useState, useMemo, memo } from 'react';
-import { FileText, ChevronDown, ChevronRight, Plus, Minus } from 'lucide-react';
+import { FileText, ChevronDown, ChevronRight, Plus, Minus, GitCommit } from 'lucide-react';
 import { useSessionChanges } from '@/hooks/useSessionChanges';
 import { cn } from '@/lib/utils';
 import ReactDiffViewer, { DiffMethod } from 'react-diff-viewer-continued';
 import { parseDiff } from '@/lib/diffParser';
 import { useTheme } from 'next-themes';
+import { Button } from '@/components/ui/button';
+import { CommitMessageDialog } from '@/components/CommitMessageDialog';
+import { useGitCommands } from '@/hooks/useGitCommands';
 
 interface FileChange {
   path: string;
@@ -16,6 +19,7 @@ interface FileChange {
 
 interface DiffViewerProps {
   sessionId: string;
+  projectId: string;
 }
 
 // Styles object (constant to avoid recreation) - GitHub-like clean styling
@@ -106,10 +110,12 @@ FileDiffView.displayName = 'FileDiffView';
  * DiffViewer - Right panel showing file changes with diffs
  * Polls for changes every 3 seconds and displays them with syntax highlighting
  */
-export function DiffViewer({ sessionId }: DiffViewerProps) {
-  const { data: changes = [], isLoading } = useSessionChanges(sessionId);
+export function DiffViewer({ sessionId, projectId }: DiffViewerProps) {
+  const { data: changes = [], isLoading, refetch } = useSessionChanges(sessionId);
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
+  const [commitDialogOpen, setCommitDialogOpen] = useState(false);
   const { theme } = useTheme();
+  const { commitToLocal, isCommitting } = useGitCommands(sessionId, projectId);
 
   const toggleFile = (path: string) => {
     setExpandedFiles((prev) => {
@@ -130,7 +136,20 @@ export function DiffViewer({ sessionId }: DiffViewerProps) {
     <div className="flex flex-col h-full border-l bg-muted/30">
       {/* Header */}
       <div className="p-4 border-b">
-        <h2 className="text-sm font-semibold mb-2">Changes</h2>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-sm font-semibold">Changes</h2>
+          {changes.length > 0 && (
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => setCommitDialogOpen(true)}
+              disabled={isCommitting}
+            >
+              <GitCommit className="mr-2 h-4 w-4" />
+              Commit to Local
+            </Button>
+          )}
+        </div>
         {changes.length > 0 && (
           <div className="flex gap-3 text-xs">
             <span className="flex items-center gap-1 text-status-success-fg">
@@ -199,6 +218,21 @@ export function DiffViewer({ sessionId }: DiffViewerProps) {
           </div>
         )}
       </div>
+
+      {/* Commit dialog */}
+      <CommitMessageDialog
+        open={commitDialogOpen}
+        onOpenChange={setCommitDialogOpen}
+        onCommit={async (message) => {
+          await commitToLocal(message);
+          setCommitDialogOpen(false);
+          // Refetch changes after commit to show clean state
+          refetch();
+        }}
+        filesChanged={changes.length}
+        additions={totalAdditions}
+        deletions={totalDeletions}
+      />
     </div>
   );
 }

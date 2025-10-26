@@ -85,6 +85,9 @@ pub fn run() {
             disable_all_sync,
             get_sync_status,
             is_session_syncing,
+            // Git commands
+            get_git_user_config,
+            commit_session_to_local,
             // Credentials commands
             get_claude_credentials,
             refresh_claude_credentials,
