@@ -726,7 +726,24 @@ impl SyncManager {
         let patch_path = patch_file.path();
         log::info!("Writing patch to temporary file: {}", patch_path.display());
 
-        // Step 5: Apply patch to local repository
+        // Step 5: Reset local working tree to clean state
+        // This is necessary because sync may have copied container changes to local as uncommitted files
+        // Those changes are already in the container's commit, so we need to discard them before applying the patch
+        log::info!("Resetting local working tree to clean state before applying patch");
+
+        self.docker
+            .exec_git_on_local(project_path, vec!["reset", "--hard", "HEAD"])
+            .await
+            .map_err(|e| anyhow!("Failed to reset local working tree: {e}"))?;
+
+        self.docker
+            .exec_git_on_local(project_path, vec!["clean", "-fd"])
+            .await
+            .map_err(|e| anyhow!("Failed to clean untracked files: {e}"))?;
+
+        log::info!("Local working tree cleaned successfully");
+
+        // Step 6: Apply patch to local repository
         log::info!("Applying patch to local repository");
 
         // Convert path to string safely
@@ -754,8 +771,8 @@ impl SyncManager {
 
             if error_msg.contains("conflict") || error_msg.contains("does not apply") {
                 return Err(anyhow!(
-                    "Patch conflicts detected. This usually means local has uncommitted changes. \
-                    Please commit or stash local changes before creating a commit from the container. \
+                    "Patch conflicts detected despite clean working tree. \
+                    This may indicate a more complex merge conflict. \
                     Original error: {e}"
                 ));
             } else {
@@ -763,7 +780,7 @@ impl SyncManager {
             }
         }
 
-        // Step 6: Get the new commit hash from local
+        // Step 7: Get the new commit hash from local
         let local_commit = self
             .docker
             .exec_git_on_local(project_path, vec!["rev-parse", "HEAD"])
