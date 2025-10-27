@@ -18,6 +18,7 @@ export interface SyncState {
 export interface SyncSwitchRequest {
   current: string;
   requested: string;
+  [key: string]: unknown;
 }
 
 /**

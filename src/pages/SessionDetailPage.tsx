@@ -350,7 +350,6 @@ export function SessionDetailPage() {
         {/* Message panel - always visible */}
         <MessagePanel
           sessionId={session.id}
-          sessionName={session.name}
           optimisticMessage={optimisticMessage}
           isSettingUp={isSettingUp}
         />

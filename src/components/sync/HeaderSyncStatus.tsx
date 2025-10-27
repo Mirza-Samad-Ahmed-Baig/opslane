@@ -51,7 +51,7 @@ export function HeaderSyncStatus({ projectId }: HeaderSyncStatusProps) {
       <div className="flex items-center gap-1.5 min-w-0 max-w-xs lg:max-w-md">
         <span
           className="text-xs font-medium text-amber-900 dark:text-amber-200 truncate"
-          title={syncState.active_session_name || syncState.active_session_id}
+          title={syncState.active_session_name || syncState.active_session_id || undefined}
         >
           Syncing: {syncState.active_session_name || syncState.active_session_id}
         </span>
