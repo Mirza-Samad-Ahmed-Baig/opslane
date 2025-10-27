@@ -1131,32 +1131,76 @@ impl SessionManager {
         let mut bytes_synced = 0u64;
 
         for (index, change) in changes.iter().enumerate() {
-            // Emit progress
-            self.emit_event(
-                window,
-                "sync-progress",
-                json!({
-                    "session_id": session_id,
-                    "message": format!("Syncing {}...", change.path),
-                    "current": index + 1,
-                    "total": changes.len(),
-                }),
-            );
-
-            // Sync individual file
-            match self
-                .sync_file(&container_id, &change.path, &change.status, target_path)
+            // Expand directories to individual files
+            let files_to_sync = match self
+                .expand_directory_to_files(&container_id, &change.path)
                 .await
             {
-                Ok(size) => {
-                    files_synced += 1;
-                    bytes_synced += size;
+                Ok(files) => {
+                    if files.is_empty() {
+                        log::info!("Skipping empty directory: {}", change.path);
+                        continue; // Skip to next change
+                    }
+                    files
                 }
                 Err(e) => {
-                    files_failed.push(SyncError {
-                        path: change.path.clone(),
-                        error: e.to_string(),
-                    });
+                    log::warn!("Failed to expand path {}: {}", change.path, e);
+                    // Fall back to treating as single file
+                    vec![change.path.clone()]
+                }
+            };
+
+            // Sync each file (may be single file or multiple from directory)
+            for (file_index, file_path) in files_to_sync.iter().enumerate() {
+                // Emit progress
+                let progress_message = if files_to_sync.len() > 1 {
+                    format!(
+                        "Syncing {}/{} from {}...",
+                        file_index + 1,
+                        files_to_sync.len(),
+                        change.path
+                    )
+                } else {
+                    format!("Syncing {file_path}...")
+                };
+
+                self.emit_event(
+                    window,
+                    "sync-progress",
+                    json!({
+                        "session_id": session_id,
+                        "message": progress_message,
+                        "current": index + 1,
+                        "total": changes.len(),
+                    }),
+                );
+
+                // Sync individual file
+                match self
+                    .sync_file(&container_id, file_path, &change.status, target_path)
+                    .await
+                {
+                    Ok(size) => {
+                        files_synced += 1;
+                        bytes_synced += size;
+                    }
+                    Err(e) => {
+                        let error_message = if files_to_sync.len() > 1 {
+                            format!(
+                                "Failed to sync {} (from directory {}): {}",
+                                file_path, change.path, e
+                            )
+                        } else {
+                            format!("Failed to sync {file_path}: {e}")
+                        };
+
+                        files_failed.push(SyncError {
+                            path: file_path.clone(),
+                            error: error_message.clone(),
+                        });
+
+                        log::error!("{error_message}");
+                    }
                 }
             }
         }
@@ -1279,6 +1323,85 @@ impl SessionManager {
         Ok(size)
     }
 
+    /// Expand a directory path to a list of all files within it
+    ///
+    /// When git status returns a directory entry (e.g., when staging a directory with `git add dir/`),
+    /// we need to expand it to individual files before syncing.
+    ///
+    /// Returns:
+    /// - Vec of file paths if the path is a directory
+    /// - Single-item vec with the original path if it's a file
+    /// - Empty vec if the directory exists but contains no files
+    async fn expand_directory_to_files(
+        &self,
+        container_id: &str,
+        dir_path: &str,
+    ) -> Result<Vec<String>> {
+        log::debug!("Checking if {dir_path} is a directory...");
+
+        // Security: Validate path doesn't contain dangerous characters
+        if dir_path.contains('\0') || dir_path.contains('\n') {
+            return Err(anyhow!("Invalid path: contains null or newline characters"));
+        }
+
+        // First, verify it's actually a directory using shell-escaped path
+        // Using single quotes and escaping any embedded single quotes
+        let escaped_path = dir_path.replace("'", "'\\''");
+        let test_cmd = vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            format!(
+                "test -d '/workspace/repo/{}' && echo 'DIR' || echo 'FILE'",
+                escaped_path
+            ),
+        ];
+
+        let test_result = self
+            .docker
+            .exec_command_blocking(container_id, test_cmd, None, None, false)
+            .await?;
+
+        if test_result.trim() != "DIR" {
+            // Not a directory, return as single file
+            log::debug!("{dir_path} is a file, not expanding");
+            return Ok(vec![dir_path.to_string()]);
+        }
+
+        log::debug!("{dir_path} is a directory, expanding to files...");
+
+        // It's a directory - find all files within it using shell-escaped path
+        let find_cmd = vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            format!("find '/workspace/repo/{}' -type f", escaped_path),
+        ];
+
+        let find_output = self
+            .docker
+            .exec_command_blocking(container_id, find_cmd, None, None, false)
+            .await?;
+
+        // Parse output and strip the /workspace/repo/ prefix
+        let files: Vec<String> = find_output
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                line.trim()
+                    .strip_prefix("/workspace/repo/")
+                    .unwrap_or(line.trim())
+                    .to_string()
+            })
+            .collect();
+
+        log::debug!("Found {} files in {}", files.len(), dir_path);
+
+        if files.is_empty() {
+            log::debug!("Directory {dir_path} is empty or contains no files");
+        }
+
+        Ok(files)
+    }
+
     /// Internal method to get session changes (doesn't require Window)
     async fn get_session_changes_internal(&self, session: &Session) -> Result<Vec<FileChange>> {
         let container_id = session
@@ -1290,6 +1413,7 @@ impl SessionManager {
             "git".to_string(),
             "status".to_string(),
             "--porcelain".to_string(),
+            "-uall".to_string(),
         ];
 
         let output = self

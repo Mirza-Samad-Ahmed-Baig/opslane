@@ -958,6 +958,7 @@ async fn sync_container_changes_back(
         "git".to_string(),
         "status".to_string(),
         "--porcelain".to_string(),
+        "-uall".to_string(),
     ];
 
     let output = docker

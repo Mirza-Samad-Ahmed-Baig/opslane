@@ -36,6 +36,7 @@ pub async fn get_session_changes(
                 "git".to_string(),
                 "status".to_string(),
                 "--porcelain".to_string(),
+                "-uall".to_string(),
             ],
             Some("/workspace/repo".to_string()),
             None,
