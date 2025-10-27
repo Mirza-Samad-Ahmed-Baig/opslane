@@ -53,6 +53,7 @@ pub struct ParsedMessage {
     pub git_branch: Option<String>,
     pub cwd: Option<String>,
     pub is_sidechain: Option<bool>,
+    pub user_type: Option<String>,
 }
 
 /// Content block types found in Claude messages
@@ -196,7 +197,7 @@ impl ClaudeService {
             log::warn!("Failed to update session activity: {e}");
         }
 
-        // ✅ NEW: Use exec_command for streaming output (like Opcode does)
+        // ✅ NEW: Use exec_command for streaming output
         let (_exec_id, stream) = self
             .docker
             .exec_command(
@@ -208,7 +209,7 @@ impl ClaudeService {
             )
             .await?;
 
-        // ✅ NEW: Stream Docker stdout directly (like Opcode streams process stdout)
+        // ✅ NEW: Stream Docker stdout directly
         let db = Arc::clone(&self.db);
         let session_id = session_id.to_string();
         stream_docker_output(session_id, stream, db).await
@@ -508,6 +509,10 @@ fn parse_claude_jsonl_line(line: &str) -> Result<Option<ParsedMessage>> {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
         is_sidechain: json.get("isSidechain").and_then(|v| v.as_bool()),
+        user_type: json
+            .get("userType")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
     }))
 }
 
@@ -631,10 +636,6 @@ fn extract_usage_info_from_json(json: &JsonValue) -> Option<UsageInfo> {
 }
 
 /// Stream Docker stdout and emit events in real-time
-///
-/// This is EXACTLY like how Opcode streams native process stdout, but reading from Docker exec stream
-/// instead of a native process pipe.
-///
 /// # Arguments
 /// * `session_id` - The Opslane session ID
 /// * `stream` - Docker exec output stream (stdout + stderr)
@@ -722,7 +723,7 @@ async fn stream_docker_output(
                             }
                         }
 
-                        // Parse JSONL and emit (same as Opcode)
+                        // Parse JSONL and emit
                         match parse_claude_jsonl_line(&line) {
                             Ok(Some(parsed)) => {
                                 let msg_type = &parsed.message_type;
@@ -832,7 +833,7 @@ async fn stream_docker_output(
             }
         }
 
-        // ✅ Stream complete (like Opcode's process exit)
+        // ✅ Stream complete
         tx.send(StreamEvent::Complete).await.ok();
         log::info!("Docker stdout streaming complete for session {session_id}");
     });

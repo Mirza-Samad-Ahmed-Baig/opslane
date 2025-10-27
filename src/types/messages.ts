@@ -12,6 +12,7 @@ export interface MessageEnvelope {
   gitBranch?: string;
   cwd?: string;
   isSidechain?: boolean;
+  userType?: string; // "external" = messages from external user (human), not internal Claude Code
 }
 
 // Content block types
