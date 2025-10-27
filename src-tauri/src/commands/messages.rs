@@ -381,3 +381,71 @@ pub async fn get_messages(
             format!("Failed to get message history: {e}")
         })
 }
+
+/// Cancel an in-progress message generation
+///
+/// Kills the Claude process running inside the container using pkill.
+/// This immediately terminates execution and allows sending new messages.
+///
+/// # Security
+/// - Only kills "claude" process (validated by pkill)
+/// - Cannot affect host or other containers
+/// - Safe to call even if no process is running (pkill fails silently)
+///
+/// # Arguments
+/// * `session_id` - The session ID
+///
+/// # Returns
+/// Returns Ok(()) if cancellation was successful or if no process was running
+#[tauri::command]
+pub async fn cancel_message_generation(
+    session_id: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    log::info!("Cancelling message generation for session: {session_id}");
+
+    // Get session to find container_id
+    let session = state
+        .db
+        .get_session(&session_id)
+        .await
+        .map_err(|e| format!("Failed to get session: {e}"))?;
+
+    let container_id = session
+        .container_id
+        .ok_or_else(|| "Session has no active container".to_string())?;
+
+    // Kill Claude process inside container using pkill
+    // Note: pkill returns non-zero if no process found, which is expected (may have already finished)
+    // We ignore errors since cancellation events should be sent regardless
+    let _ = state
+        .docker
+        .exec_command(
+            &container_id,
+            vec![
+                "pkill".to_string(),
+                "-KILL".to_string(), // SIGKILL for immediate termination
+                "claude".to_string(),
+            ],
+            None,  // working_dir (not needed)
+            None,  // stdin (not needed)
+            false, // as_root (not needed)
+        )
+        .await;
+
+    log::info!("Kill signal sent to Claude process (if running) for session: {session_id}");
+
+    // Emit cancellation event for frontend
+    // Note: We only emit Cancelled, not Complete, since the frontend cancellation handler
+    // already handles all cleanup (sets isSending=false, calls onStreamComplete, etc.)
+    let event_channel = format!("message-stream-{session_id}");
+    if let Err(e) = app.emit(
+        &event_channel,
+        &crate::services::claude_service::StreamEvent::Cancelled,
+    ) {
+        log::error!("Failed to emit cancellation event: {e}");
+    }
+
+    Ok(())
+}

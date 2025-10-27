@@ -28,6 +28,10 @@ pub enum StreamEvent {
     #[serde(rename = "error")]
     Error { message: String },
 
+    /// Message cancelled by user
+    #[serde(rename = "cancelled")]
+    Cancelled,
+
     /// Message complete
     #[serde(rename = "complete")]
     Complete,

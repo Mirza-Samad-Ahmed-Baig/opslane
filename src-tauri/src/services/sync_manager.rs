@@ -580,6 +580,9 @@ impl SyncManager {
                     crate::services::claude_service::StreamEvent::Error { message } => {
                         return Err(anyhow!("Claude Code error during commit: {message}"));
                     }
+                    crate::services::claude_service::StreamEvent::Cancelled => {
+                        return Err(anyhow!("Claude Code commit was cancelled by user"));
+                    }
                     crate::services::claude_service::StreamEvent::ToolUse { tool_name } => {
                         log::debug!("Claude Code using tool: {tool_name}");
                     }
@@ -958,7 +961,6 @@ async fn sync_container_changes_back(
         "git".to_string(),
         "status".to_string(),
         "--porcelain".to_string(),
-        "-uall".to_string(),
     ];
 
     let output = docker

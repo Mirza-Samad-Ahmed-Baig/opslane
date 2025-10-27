@@ -158,7 +158,6 @@ function saveHeightCache(sessionId: string, cache: Map<string, number>): void {
 
 interface MessagePanelProps {
   sessionId: string;
-  sessionName?: string; // Human-readable session name for notifications
   optimisticMessage?: DisplayMessage | null;
   isSettingUp?: boolean;
 }
@@ -167,12 +166,7 @@ interface MessagePanelProps {
  * MessagePanel - Center panel for chat messages and input
  * Full implementation with streaming support and virtual scrolling for performance
  */
-export function MessagePanel({
-  sessionId,
-  sessionName,
-  optimisticMessage,
-  isSettingUp,
-}: MessagePanelProps) {
+export function MessagePanel({ sessionId, optimisticMessage, isSettingUp }: MessagePanelProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
   const heightCacheRef = useRef<Map<string, number>>(loadHeightCache(sessionId));
@@ -184,7 +178,6 @@ export function MessagePanel({
   const { messages, isLoading, isSending, error, streamingTimeout, sendMessage, clearError } =
     useChatMessages({
       sessionId,
-      sessionName,
     });
 
   // Phase 1: Merge optimistic message with real messages
@@ -657,6 +650,7 @@ export function MessagePanel({
         <ChatInput
           sessionId={sessionId}
           onSend={sendMessageWithModel}
+          isSending={isSending}
           disabled={
             isSending ||
             isLoading ||

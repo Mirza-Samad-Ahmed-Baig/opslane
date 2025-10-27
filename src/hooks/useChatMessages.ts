@@ -16,12 +16,9 @@ import {
   isThinkingBlock,
   isImageBlock,
 } from '@/types/messages';
-import { notifyTaskComplete, notifyError } from '@/utils/notifications';
-import { useNotificationStore } from '@/stores/notificationStore';
 
 interface UseChatMessagesOptions {
   sessionId: string;
-  sessionName?: string; // Human-readable session name for notifications
   initialMessage?: string;
   onStreamStart?: () => void;
   onStreamComplete?: () => void;
@@ -45,7 +42,6 @@ function generateMessageId(prefix: string): string {
 
 export function useChatMessages({
   sessionId,
-  sessionName,
   initialMessage,
   onStreamStart,
   onStreamComplete,
@@ -71,11 +67,11 @@ export function useChatMessages({
   const [error, setError] = useState<string | null>(null);
   const [streamingTimeout, setStreamingTimeout] = useState(false);
 
-  // Notification store
-  const addNotification = useNotificationStore((state) => state.addNotification);
-
   // Use ref to avoid race condition with effect dependencies
   const previousMessageLengthRef = useRef(0);
+
+  // Track if current stream was cancelled (to ignore subsequent complete events)
+  const wasCancelledRef = useRef(false);
 
   // Track timeout for catastrophic failure detection
   const timeoutIdRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -362,7 +358,51 @@ export function useChatMessages({
             break;
           }
 
+          case 'cancelled': {
+            // Clear timeout timer on cancellation
+            if (timeoutIdRef.current) {
+              clearTimeout(timeoutIdRef.current);
+              timeoutIdRef.current = null;
+            }
+            setStreamingTimeout(false);
+
+            // Mark this stream as cancelled to ignore subsequent complete events
+            wasCancelledRef.current = true;
+
+            // Add system message for cancellation (only if not already present)
+            setMessages((prev) => {
+              // Check if last message is already a cancellation to prevent duplicates
+              const lastMessage = prev[prev.length - 1];
+              if (lastMessage?.text === '⚠️ Message generation cancelled by user') {
+                console.log('[useChatMessages] Skipping duplicate cancellation message');
+                return prev; // Don't add duplicate cancellation message
+              }
+
+              return [
+                ...prev,
+                {
+                  id: generateMessageId('cancelled'),
+                  uuid: generateMessageId('cancelled-uuid'),
+                  role: 'assistant' as const,
+                  text: '⚠️ Message generation cancelled by user',
+                  status: 'complete' as const,
+                },
+              ];
+            });
+            setIsSending(false);
+            onStreamComplete?.();
+            break;
+          }
+
           case 'complete': {
+            // Ignore complete events if stream was cancelled
+            if (wasCancelledRef.current) {
+              console.log('[useChatMessages] Ignoring complete event after cancellation');
+              // Don't reset here - let sendMessage handle the reset to ensure
+              // all complete events from a cancelled stream are consistently ignored
+              break;
+            }
+
             // Mark all streaming messages as complete
             setMessages((prev) =>
               prev.map((msg) =>
@@ -370,20 +410,6 @@ export function useChatMessages({
               )
             );
             setIsSending(false);
-
-            // Show OS notification if window not focused
-            notifyTaskComplete(sessionName);
-
-            // Add to in-app notification center
-            if (sessionName) {
-              addNotification({
-                sessionId,
-                sessionName,
-                type: 'complete',
-                message: 'Task completed',
-              });
-            }
-
             onStreamComplete?.();
             break;
           }
@@ -400,20 +426,6 @@ export function useChatMessages({
               },
             ]);
             setIsSending(false);
-
-            // Show OS notification if window not focused
-            notifyError(streamEvent.message, sessionName);
-
-            // Add to in-app notification center
-            if (sessionName) {
-              addNotification({
-                sessionId,
-                sessionName,
-                type: 'error',
-                message: streamEvent.message,
-              });
-            }
-
             onError?.(streamEvent.message);
             break;
           }
@@ -449,6 +461,7 @@ export function useChatMessages({
       try {
         setIsSending(true);
         setError(null);
+        wasCancelledRef.current = false; // Reset cancellation flag for new message
         onStreamStart?.();
 
         // Add user message optimistically with collision-resistant ID

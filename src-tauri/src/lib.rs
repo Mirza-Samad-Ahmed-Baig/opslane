@@ -51,7 +51,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::default().build())
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             // Legacy commands
             greet,
@@ -71,6 +70,7 @@ pub fn run() {
             // Message commands
             send_message,
             get_messages,
+            cancel_message_generation,
             // Image commands
             copy_image_to_session,
             // Project commands

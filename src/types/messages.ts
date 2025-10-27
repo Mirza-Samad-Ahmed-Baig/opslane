@@ -167,4 +167,5 @@ export type StreamEvent =
   | { type: 'tool_use'; tool_name: string }
   | { type: 'tool_result'; tool_name: string; success: boolean }
   | { type: 'error'; message: string }
+  | { type: 'cancelled' }
   | { type: 'complete' };

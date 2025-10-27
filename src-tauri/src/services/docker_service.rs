@@ -596,7 +596,7 @@ impl DockerService {
 
         let allowed_commands = [
             "claude", "cat", "sh", "ls", "echo", "chown", "git", "mkdir", "rm", "base64", "tee",
-            "find", "test",
+            "pkill", "kill", // Required for stop generation
         ];
         let command_name = &cmd[0];
 
@@ -701,7 +701,7 @@ impl DockerService {
 
         let allowed_commands = [
             "claude", "cat", "sh", "ls", "echo", "chown", "git", "mkdir", "rm", "base64", "tee",
-            "find", "test",
+            "pkill", "kill", // Required for stop generation
         ];
         let command_name = &cmd[0];
 
