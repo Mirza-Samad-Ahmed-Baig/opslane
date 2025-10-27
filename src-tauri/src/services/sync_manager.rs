@@ -726,7 +726,14 @@ impl SyncManager {
         let patch_path = patch_file.path();
         log::info!("Writing patch to temporary file: {}", patch_path.display());
 
-        // Step 5: Reset local working tree to clean state
+        // Step 5: Clean up any interrupted git am operations from previous attempts
+        log::info!("Cleaning up any interrupted git am operations");
+        let _ = self
+            .docker
+            .exec_git_on_local(project_path, vec!["am", "--abort"])
+            .await; // Ignore errors if no am in progress
+
+        // Step 6: Reset local working tree to clean state
         // This is necessary because sync may have copied container changes to local as uncommitted files
         // Those changes are already in the container's commit, so we need to discard them before applying the patch
         log::info!("Resetting local working tree to clean state before applying patch");
@@ -743,7 +750,7 @@ impl SyncManager {
 
         log::info!("Local working tree cleaned successfully");
 
-        // Step 6: Apply patch to local repository
+        // Step 7: Apply patch to local repository
         log::info!("Applying patch to local repository");
 
         // Convert path to string safely
@@ -780,7 +787,7 @@ impl SyncManager {
             }
         }
 
-        // Step 7: Get the new commit hash from local
+        // Step 8: Get the new commit hash from local
         let local_commit = self
             .docker
             .exec_git_on_local(project_path, vec!["rev-parse", "HEAD"])
