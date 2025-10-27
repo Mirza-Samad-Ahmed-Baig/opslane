@@ -473,7 +473,15 @@ impl SyncManager {
             }
             return Err(anyhow::anyhow!(
                 "Claude Code reported success but no new commit was detected in container. \
-                This may indicate no changes to commit or a pre-commit hook failure."
+                Possible causes:\n\
+                1. No changes to commit (working tree was clean)\n\
+                2. Pre-commit hooks rejected the commit\n\
+                3. Git user identity not configured (check container logs for warnings)\n\
+                \n\
+                If you see git identity warnings in logs, configure git on your host:\n\
+                git config --global user.name \"Your Name\"\n\
+                git config --global user.email \"you@example.com\"\n\
+                Then create a new session."
             ));
         }
 

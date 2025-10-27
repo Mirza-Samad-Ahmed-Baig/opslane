@@ -277,6 +277,48 @@ impl DockerService {
         Ok(())
     }
 
+    /// Configure git user identity in container
+    ///
+    /// Writes user.name and user.email to container's global git config
+    /// Required for Claude Code to create commits
+    pub async fn configure_git_user(
+        &self,
+        container_id: &str,
+        name: &str,
+        email: &str,
+    ) -> Result<()> {
+        log::info!("Configuring git user identity in container {container_id}");
+
+        // Set user.name
+        let name_cmd = vec![
+            "git".to_string(),
+            "config".to_string(),
+            "--global".to_string(),
+            "user.name".to_string(),
+            name.to_string(),
+        ];
+
+        self.exec_command_blocking(container_id, name_cmd, None, None, false)
+            .await
+            .map_err(|e| anyhow!("Failed to configure git user.name: {e}"))?;
+
+        // Set user.email
+        let email_cmd = vec![
+            "git".to_string(),
+            "config".to_string(),
+            "--global".to_string(),
+            "user.email".to_string(),
+            email.to_string(),
+        ];
+
+        self.exec_command_blocking(container_id, email_cmd, None, None, false)
+            .await
+            .map_err(|e| anyhow!("Failed to configure git user.email: {e}"))?;
+
+        log::info!("Git user identity configured: {name} <{email}>");
+        Ok(())
+    }
+
     /// Detect git user configuration from local system
     ///
     /// Returns (name, email) tuple or error if not configured
