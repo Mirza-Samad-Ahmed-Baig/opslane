@@ -750,7 +750,7 @@ impl SyncManager {
 
         log::info!("Local working tree cleaned successfully");
 
-        // Step 7: Apply patch to local repository
+        // Step 6: Apply patch to local repository
         log::info!("Applying patch to local repository");
 
         // Convert path to string safely
@@ -787,7 +787,7 @@ impl SyncManager {
             }
         }
 
-        // Step 8: Get the new commit hash from local
+        // Step 7: Get the new commit hash from local
         let local_commit = self
             .docker
             .exec_git_on_local(project_path, vec!["rev-parse", "HEAD"])
