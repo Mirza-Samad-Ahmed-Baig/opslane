@@ -653,19 +653,27 @@ impl SyncManager {
 
         log::info!("Container HEAD is at commit: {container_commit}");
 
-        // Step 2: Check if commit already exists in local repository
-        let local_has_commit = self
+        // Step 2: Check if local HEAD already points to this commit
+        let local_head = self
             .docker
-            .exec_git_on_local(
-                project_path,
-                vec!["rev-parse", "--verify", "--quiet", &container_commit],
-            )
+            .exec_git_on_local(project_path, vec!["rev-parse", "HEAD"])
             .await
-            .is_ok();
+            .ok()
+            .map(|s| s.trim().to_string());
 
-        if local_has_commit {
-            log::info!("Commit {container_commit} already exists in local repository");
-            return Ok(container_commit);
+        if let Some(local_head) = local_head {
+            if local_head == container_commit {
+                log::info!(
+                    "Local HEAD already points to container commit {container_commit}, skipping"
+                );
+                return Ok(container_commit);
+            } else {
+                log::info!(
+                    "Local HEAD ({}) differs from container commit ({}), will apply patch",
+                    &local_head[..7],
+                    &container_commit[..7]
+                );
+            }
         }
 
         // Step 3: Export commit as a patch from container
