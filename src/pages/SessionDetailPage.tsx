@@ -11,6 +11,7 @@ import { DiffViewer } from '@/components/DiffViewer';
 import { SessionStatusBadge } from '@/components/SessionStatusBadge';
 import { EnableSyncConfirmation } from '@/components/sync/EnableSyncConfirmation';
 import { HeaderSyncStatus } from '@/components/sync/HeaderSyncStatus';
+import { NotificationBell } from '@/components/notifications/NotificationBell';
 import { logger } from '@/utils/logger';
 import type { DisplayMessage, ImageAttachment } from '@/types/messages';
 
@@ -214,6 +215,8 @@ export function SessionDetailPage() {
           {/* Global sync status - shows if ANY session is syncing */}
           {session.project_id && <HeaderSyncStatus projectId={session.project_id} />}
 
+          <NotificationBell />
+
           {/* Two-way sync mode toggle - shows for THIS session only when sync is not active */}
           {session.status === 'ready' && !isSyncActive && (
             <Button
@@ -347,6 +350,7 @@ export function SessionDetailPage() {
         {/* Message panel - always visible */}
         <MessagePanel
           sessionId={session.id}
+          sessionName={session.name}
           optimisticMessage={optimisticMessage}
           isSettingUp={isSettingUp}
         />

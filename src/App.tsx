@@ -16,6 +16,7 @@ import { ChatInput } from '@/components/chat/ChatInput';
 import { SessionList } from '@/components/SessionList';
 import { CompactRepositoryBadge } from '@/components/CompactRepositoryBadge';
 import { HeaderSyncStatus } from '@/components/sync/HeaderSyncStatus';
+import { NotificationBell } from '@/components/notifications/NotificationBell';
 import { ComponentShowcase } from '@/pages/ComponentShowcase';
 import { SessionDetailPage } from '@/pages/SessionDetailPage';
 import { useDockerStatus, useCreateSession, useProjects, useGetOrCreateProject } from '@/hooks';
@@ -24,6 +25,7 @@ import type { Project } from '@/types/project';
 import type { ImageAttachment } from '@/types/messages';
 import { logger } from './utils/logger';
 import { toastPatterns } from '@/lib/toast-patterns';
+import { checkNotificationPermission } from '@/utils/notifications';
 import './App.css';
 
 function HomePage() {
@@ -196,6 +198,8 @@ function HomePage() {
             {/* Sync status badge - only shows when active */}
             {primaryProject && <HeaderSyncStatus projectId={primaryProject.id} />}
 
+            <NotificationBell />
+
             <Link to="/showcase">
               <Button variant="ghost" size="icon" title="Component Showcase">
                 <Palette className="h-4 w-4" />
@@ -319,6 +323,23 @@ function App() {
         unlisten();
       }
     };
+  }, []);
+
+  // Check notification permission on app startup
+  useEffect(() => {
+    const checkPermission = async () => {
+      const hasPermission = await checkNotificationPermission();
+
+      if (hasPermission) {
+        logger.info('[App] Notification permission granted');
+      } else {
+        logger.info(
+          '[App] Notification permission not granted - notifications will be requested when needed'
+        );
+      }
+    };
+
+    checkPermission();
   }, []);
 
   return (

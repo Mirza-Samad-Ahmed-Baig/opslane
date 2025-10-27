@@ -16,9 +16,12 @@ import {
   isThinkingBlock,
   isImageBlock,
 } from '@/types/messages';
+import { notifyTaskComplete, notifyError } from '@/utils/notifications';
+import { useNotificationStore } from '@/stores/notificationStore';
 
 interface UseChatMessagesOptions {
   sessionId: string;
+  sessionName?: string; // Human-readable session name for notifications
   initialMessage?: string;
   onStreamStart?: () => void;
   onStreamComplete?: () => void;
@@ -42,6 +45,7 @@ function generateMessageId(prefix: string): string {
 
 export function useChatMessages({
   sessionId,
+  sessionName,
   initialMessage,
   onStreamStart,
   onStreamComplete,
@@ -66,6 +70,9 @@ export function useChatMessages({
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [streamingTimeout, setStreamingTimeout] = useState(false);
+
+  // Notification store
+  const addNotification = useNotificationStore((state) => state.addNotification);
 
   // Use ref to avoid race condition with effect dependencies
   const previousMessageLengthRef = useRef(0);
@@ -363,6 +370,20 @@ export function useChatMessages({
               )
             );
             setIsSending(false);
+
+            // Show OS notification if window not focused
+            notifyTaskComplete(sessionName);
+
+            // Add to in-app notification center
+            if (sessionName) {
+              addNotification({
+                sessionId,
+                sessionName,
+                type: 'complete',
+                message: 'Task completed',
+              });
+            }
+
             onStreamComplete?.();
             break;
           }
@@ -379,6 +400,20 @@ export function useChatMessages({
               },
             ]);
             setIsSending(false);
+
+            // Show OS notification if window not focused
+            notifyError(streamEvent.message, sessionName);
+
+            // Add to in-app notification center
+            if (sessionName) {
+              addNotification({
+                sessionId,
+                sessionName,
+                type: 'error',
+                message: streamEvent.message,
+              });
+            }
+
             onError?.(streamEvent.message);
             break;
           }

@@ -35,6 +35,9 @@ export function SessionListItem({ session, project, isActive = false }: SessionL
   // Subtitle: project • timestamp
   const subtitle = `${project.name} • ${timestamp}`;
 
+  // DEBUG: Log to verify this code is running
+  console.log('[SessionListItem] Rendering:', { title, hasUnreadBadge: false });
+
   return (
     <button
       onClick={handleClick}

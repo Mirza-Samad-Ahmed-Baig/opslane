@@ -32,6 +32,7 @@ tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-window-state = "2"
+tauri-plugin-notification = "2"
 
 # Database dependencies
 sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite"] }
