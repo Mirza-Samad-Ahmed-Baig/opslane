@@ -1,23 +1,38 @@
 use crate::database::Database;
-use crate::services::{DockerService, SyncWatcher};
-use anyhow::Result;
+use crate::services::{ClaudeService, DockerService, SyncWatcher};
+use anyhow::{anyhow, Result};
 use log::{debug, info, warn};
 use serde::Serialize;
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use tauri::{Emitter, Window};
+use tempfile::NamedTempFile;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
 /// Maximum file size for sync (100MB)
 const MAX_SYNC_FILE_SIZE: u64 = 100 * 1024 * 1024;
 
+/// Timeout duration for Claude Code commit operations (2 minutes)
+const CLAUDE_COMMIT_TIMEOUT_SECS: u64 = 120;
+
+/// Maximum patch file size for commit copying (5MB)
+const MAX_PATCH_SIZE: usize = 5 * 1024 * 1024;
+
+/// Default CPU limit for temporary session manager instances
+const DEFAULT_SESSION_CPU_LIMIT: f64 = 1.0;
+
+/// Default memory limit for temporary session manager instances (in MB)
+const DEFAULT_SESSION_MEMORY_LIMIT: i64 = 2048;
+
 /// Manages two-way sync between local files and session containers
 pub struct SyncManager {
     db: Arc<Database>,
     docker: Arc<DockerService>,
+    claude: Arc<ClaudeService>,
     watcher: Arc<SyncWatcher>,
     sync_task: Arc<RwLock<Option<JoinHandle<()>>>>,
     /// Track files recently synced from container→local to prevent sync loops
@@ -40,10 +55,11 @@ pub struct CommitResult {
 }
 
 impl SyncManager {
-    pub fn new(db: Arc<Database>, docker: Arc<DockerService>) -> Self {
+    pub fn new(db: Arc<Database>, docker: Arc<DockerService>, claude: Arc<ClaudeService>) -> Self {
         Self {
             db,
             docker,
+            claude,
             watcher: Arc::new(SyncWatcher::new()),
             sync_task: Arc::new(RwLock::new(None)),
             recently_synced_files: Arc::new(RwLock::new(HashMap::new())),
@@ -342,24 +358,31 @@ impl SyncManager {
 
     /// Commit session changes to local repository
     ///
-    /// This pauses sync, creates commit, resets container, then resumes sync
+    /// This requests Claude Code to create a commit in the container,
+    /// then copies that commit to the local repository.
     pub async fn commit_session_changes_to_local(
         &self,
         session_id: &str,
         commit_message: &str,
         window: &Window,
     ) -> Result<CommitResult> {
-        info!("Starting commit to local for session: {}", session_id);
+        info!("Starting commit to local for session: {session_id}");
 
         // 1. Get session and project info
         let session = self.db.get_session(session_id).await?;
         let project = self.db.get_project(&session.project_id).await?;
         let project_path = PathBuf::from(&project.local_repo_path);
 
-        // 2. Check if sync is active
+        // 2. Get container ID
+        let container_id = session
+            .container_id
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Session has no container"))?;
+
+        // 3. Check if sync is active
         let sync_was_active = session.is_sync_active;
 
-        // 3. Disable sync if active (with state snapshot)
+        // 4. Disable sync if active
         if sync_was_active {
             info!("Disabling sync before commit");
             self.disable_all_sync(&project.id, window).await?;
@@ -368,13 +391,13 @@ impl SyncManager {
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         }
 
-        // 4. Sync container changes to local one final time
+        // 5. Sync container changes to local one final time
         info!("Syncing container changes to local before commit");
         let session_manager = crate::services::SessionManager::new(
             self.db.clone(),
             self.docker.clone(),
-            1.0,  // default cpu limit
-            2048, // default memory limit
+            DEFAULT_SESSION_CPU_LIMIT,
+            DEFAULT_SESSION_MEMORY_LIMIT,
         );
 
         let sync_result = session_manager
@@ -382,59 +405,95 @@ impl SyncManager {
             .await?;
 
         if !sync_result.files_failed.is_empty() {
+            // Re-enable sync before returning error
+            if sync_was_active {
+                let _ = self.enable_sync(session_id, window).await;
+            }
             return Err(anyhow::anyhow!(
                 "Failed to sync {} files before commit",
                 sync_result.files_failed.len()
             ));
         }
 
-        // 5. Get git user config
-        let (user_name, user_email) = self.docker.detect_local_git_user().await?;
-
-        // 6. Stage all changes on local
-        info!("Staging changes on local repository");
-        self.docker
-            .exec_git_on_local(&project_path, vec!["add", "."])
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to stage changes: {}", e))?;
-
-        // 7. Create commit on local
-        info!("Creating commit on local repository");
-
-        // Build git -c arguments to set user config for this commit
-        // This ensures git knows both author and committer identity
-        let user_name_config = format!("user.name={}", user_name);
-        let user_email_config = format!("user.email={}", user_email);
-
-        let commit_output = self
+        // 5b. Capture current container HEAD before requesting commit
+        let container_commit_before_claude = self
             .docker
-            .exec_git_on_local(
-                &project_path,
+            .exec_command_blocking(
+                container_id,
                 vec![
-                    "-c",
-                    &user_name_config,
-                    "-c",
-                    &user_email_config,
-                    "commit",
-                    "--no-verify",
-                    "-m",
-                    commit_message,
+                    "git".to_string(),
+                    "rev-parse".to_string(),
+                    "HEAD".to_string(),
                 ],
+                Some("/workspace/repo".to_string()),
+                None,
+                false,
             )
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to create commit: {}", e))?;
-
-        info!("Commit created: {}", commit_output);
-
-        // 8. Get commit hash
-        let commit_hash = self
-            .docker
-            .exec_git_on_local(&project_path, vec!["rev-parse", "HEAD"])
             .await?
             .trim()
             .to_string();
 
-        // 9. Get file count from git show
+        info!("Container HEAD before commit request: {container_commit_before_claude}");
+
+        // 6. Request Claude Code to create commit in container
+        info!("Requesting Claude Code to create commit");
+        if let Err(e) = self.request_claude_commit(session_id, commit_message).await {
+            // Re-enable sync before returning error
+            if sync_was_active {
+                let _ = self.enable_sync(session_id, window).await;
+            }
+            return Err(anyhow::anyhow!("Claude Code failed to create commit: {e}"));
+        }
+
+        // 7. Verify commit was created (get container commit hash after Claude)
+        let container_commit_after = self
+            .docker
+            .exec_command_blocking(
+                container_id,
+                vec![
+                    "git".to_string(),
+                    "rev-parse".to_string(),
+                    "HEAD".to_string(),
+                ],
+                Some("/workspace/repo".to_string()),
+                None,
+                false,
+            )
+            .await?
+            .trim()
+            .to_string();
+
+        info!("Container commit after Claude: {container_commit_after}");
+
+        // Verify a new commit was actually created
+        if container_commit_after == container_commit_before_claude {
+            // No new commit was created!
+            if sync_was_active {
+                let _ = self.enable_sync(session_id, window).await;
+            }
+            return Err(anyhow::anyhow!(
+                "Claude Code reported success but no new commit was detected in container. \
+                This may indicate no changes to commit or a pre-commit hook failure."
+            ));
+        }
+
+        // 8. Copy commit from container to local
+        info!("Copying commit from container to local");
+        let local_commit_hash = match self
+            .copy_commit_from_container_to_local(session_id, container_id, &project_path)
+            .await
+        {
+            Ok(hash) => hash,
+            Err(e) => {
+                // Re-enable sync before returning error
+                if sync_was_active {
+                    let _ = self.enable_sync(session_id, window).await;
+                }
+                return Err(anyhow::anyhow!("Failed to copy commit to local: {e}"));
+            }
+        };
+
+        // 9. Get file count from local commit
         let files_output = self
             .docker
             .exec_git_on_local(
@@ -445,33 +504,17 @@ impl SyncManager {
 
         let files_changed = files_output.lines().filter(|l| !l.is_empty()).count();
 
-        // 10. Reset container to match local
-        info!("Resetting container to match local repository");
-        let container_id = &session.container_id.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("Session has no container")
-        })?;
+        // 10. Verify container and local are in sync (optional but good for debugging)
+        let local_commit_verify = self
+            .docker
+            .exec_git_on_local(&project_path, vec!["rev-parse", "HEAD"])
+            .await?
+            .trim()
+            .to_string();
 
-        self.docker
-            .exec_command_blocking(
-                container_id,
-                vec!["git".to_string(), "reset".to_string(), "--hard".to_string(), "HEAD".to_string()],
-                Some("/workspace/repo".to_string()),
-                None,
-                false,
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to reset container: {}", e))?;
-
-        self.docker
-            .exec_command_blocking(
-                container_id,
-                vec!["git".to_string(), "clean".to_string(), "-fd".to_string()],
-                Some("/workspace/repo".to_string()),
-                None,
-                false,
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to clean container: {}", e))?;
+        info!(
+            "Commit copy complete - Container: {container_commit_after}, Local: {local_commit_verify}"
+        );
 
         // 11. Re-enable sync if it was active
         if sync_was_active {
@@ -480,16 +523,249 @@ impl SyncManager {
 
             self.enable_sync(session_id, window)
                 .await
-                .map_err(|e| anyhow::anyhow!("Failed to re-enable sync after commit: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("Failed to re-enable sync after commit: {e}"))?;
         }
 
-        info!("Commit completed successfully: {}", commit_hash);
+        info!("Commit completed successfully: {local_commit_hash}");
 
         Ok(CommitResult {
-            commit_hash,
+            commit_hash: local_commit_hash,
             files_changed,
             success: true,
         })
+    }
+
+    /// Request Claude Code to create a commit in the container
+    ///
+    /// This sends a message to Claude Code asking it to create a git commit
+    /// with the specified message. Pre-commit hooks will run during this process.
+    ///
+    /// # Arguments
+    /// * `session_id` - The session ID
+    /// * `commit_message` - The commit message to use
+    ///
+    /// # Returns
+    /// Returns Ok(()) when Claude successfully completes the commit
+    async fn request_claude_commit(&self, session_id: &str, commit_message: &str) -> Result<()> {
+        log::info!("Requesting Claude Code to create commit in container for session {session_id}");
+
+        // Validate commit message
+        if commit_message.is_empty() {
+            return Err(anyhow!("Commit message cannot be empty"));
+        }
+        if commit_message.len() > 10000 {
+            return Err(anyhow!("Commit message too long (max 10000 characters)"));
+        }
+
+        // Construct message for Claude
+        let claude_message =
+            format!("Create a git commit with the following message:\n\n{commit_message}");
+
+        // Send message to Claude Code
+        let mut rx = self
+            .claude
+            .send_message(session_id, claude_message, None)
+            .await
+            .map_err(|e| anyhow!("Failed to send commit request to Claude: {e}"))?;
+
+        // Wait for Claude to complete (with timeout)
+        let timeout_duration = tokio::time::Duration::from_secs(CLAUDE_COMMIT_TIMEOUT_SECS);
+        let completion = tokio::time::timeout(timeout_duration, async {
+            while let Some(event) = rx.recv().await {
+                match event {
+                    crate::services::claude_service::StreamEvent::Complete => {
+                        log::info!("Claude Code completed commit creation");
+                        return Ok(());
+                    }
+                    crate::services::claude_service::StreamEvent::Error { message } => {
+                        return Err(anyhow!("Claude Code error during commit: {message}"));
+                    }
+                    crate::services::claude_service::StreamEvent::ToolUse { tool_name } => {
+                        log::debug!("Claude Code using tool: {tool_name}");
+                    }
+                    crate::services::claude_service::StreamEvent::ToolResult {
+                        tool_name,
+                        success,
+                    } => {
+                        log::debug!("Claude Code tool result: {tool_name} (success: {success})");
+                    }
+                    crate::services::claude_service::StreamEvent::TextDelta { .. } => {
+                        // Ignore text deltas during commit
+                    }
+                }
+            }
+            Err(anyhow!(
+                "Claude Code stream ended without completion signal"
+            ))
+        })
+        .await;
+
+        match completion {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err(anyhow!("Timeout waiting for Claude Code to create commit")),
+        }
+    }
+
+    /// Copy a commit from container to local repository using git format-patch + git am
+    ///
+    /// This preserves all commit metadata including author, date, and message.
+    /// Pre-commit hook changes are included in the patch.
+    ///
+    /// # Arguments
+    /// * `session_id` - The session ID
+    /// * `container_id` - The container ID
+    /// * `project_path` - Path to local project repository
+    ///
+    /// # Returns
+    /// Returns the commit hash of the applied commit on local
+    async fn copy_commit_from_container_to_local(
+        &self,
+        session_id: &str,
+        container_id: &str,
+        project_path: &std::path::Path,
+    ) -> Result<String> {
+        log::info!("Copying commit from container to local for session {session_id}");
+
+        // Security: Validate session ID doesn't contain unsafe characters
+        if session_id.contains(|c: char| c == '/' || c == '\\' || c.is_control()) {
+            return Err(anyhow!("Invalid session ID contains unsafe characters"));
+        }
+
+        // Step 1: Verify a commit exists in container (get latest commit hash)
+        let container_commit = self
+            .docker
+            .exec_command_blocking(
+                container_id,
+                vec![
+                    "git".to_string(),
+                    "rev-parse".to_string(),
+                    "HEAD".to_string(),
+                ],
+                Some("/workspace/repo".to_string()),
+                None,
+                false,
+            )
+            .await
+            .map_err(|e| anyhow!("Failed to get container commit: {e}"))?
+            .trim()
+            .to_string();
+
+        log::info!("Container HEAD is at commit: {container_commit}");
+
+        // Step 2: Check if commit already exists in local repository
+        let local_has_commit = self
+            .docker
+            .exec_git_on_local(
+                project_path,
+                vec!["rev-parse", "--verify", "--quiet", &container_commit],
+            )
+            .await
+            .is_ok();
+
+        if local_has_commit {
+            log::info!("Commit {container_commit} already exists in local repository");
+            return Ok(container_commit);
+        }
+
+        // Step 3: Export commit as a patch from container
+        log::info!("Exporting commit as patch from container");
+        let patch_content = self
+            .docker
+            .exec_command_blocking(
+                container_id,
+                vec![
+                    "git".to_string(),
+                    "format-patch".to_string(),
+                    "-1".to_string(), // Last 1 commit
+                    "HEAD".to_string(),
+                    "--stdout".to_string(), // Output to stdout
+                ],
+                Some("/workspace/repo".to_string()),
+                None,
+                false,
+            )
+            .await
+            .map_err(|e| anyhow!("Failed to export patch from container: {e}"))?;
+
+        if patch_content.trim().is_empty() {
+            return Err(anyhow!("Exported patch is empty - no commit to copy"));
+        }
+
+        // Validate patch size
+        if patch_content.len() > MAX_PATCH_SIZE {
+            return Err(anyhow!(
+                "Patch size ({} bytes) exceeds maximum allowed size of {} bytes",
+                patch_content.len(),
+                MAX_PATCH_SIZE
+            ));
+        }
+
+        log::info!("Exported patch size: {} bytes", patch_content.len());
+
+        // Step 4: Write patch to temporary file on host using atomic temp file
+        let mut patch_file = NamedTempFile::new_in(std::env::temp_dir())
+            .map_err(|e| anyhow!("Failed to create temporary patch file: {e}"))?;
+
+        patch_file
+            .write_all(patch_content.as_bytes())
+            .map_err(|e| anyhow!("Failed to write patch content: {e}"))?;
+
+        patch_file
+            .flush()
+            .map_err(|e| anyhow!("Failed to flush patch file: {e}"))?;
+
+        let patch_path = patch_file.path();
+        log::info!("Writing patch to temporary file: {}", patch_path.display());
+
+        // Step 5: Apply patch to local repository
+        log::info!("Applying patch to local repository");
+
+        // Convert path to string safely
+        let patch_path_str = patch_path
+            .to_str()
+            .ok_or_else(|| anyhow!("Patch file path contains invalid UTF-8"))?;
+
+        let apply_result = self
+            .docker
+            .exec_git_on_local(
+                project_path,
+                vec![
+                    "am",        // Apply mailbox (patch)
+                    "--3way",    // Use 3-way merge on conflicts
+                    "--keep-cr", // Preserve CRLF line endings
+                    patch_path_str,
+                ],
+            )
+            .await;
+
+        // Check if apply succeeded (temp file will be auto-deleted when patch_file goes out of scope)
+        if let Err(e) = apply_result {
+            // Try to provide more context about the failure
+            let error_msg = e.to_string();
+
+            if error_msg.contains("conflict") || error_msg.contains("does not apply") {
+                return Err(anyhow!(
+                    "Patch conflicts detected. This usually means local has uncommitted changes. \
+                    Please commit or stash local changes before creating a commit from the container. \
+                    Original error: {e}"
+                ));
+            } else {
+                return Err(anyhow!("Failed to apply patch to local repository: {e}"));
+            }
+        }
+
+        // Step 6: Get the new commit hash from local
+        let local_commit = self
+            .docker
+            .exec_git_on_local(project_path, vec!["rev-parse", "HEAD"])
+            .await?
+            .trim()
+            .to_string();
+
+        log::info!("Successfully copied commit to local: {local_commit}");
+
+        Ok(local_commit)
     }
 }
 

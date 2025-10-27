@@ -64,7 +64,11 @@ impl AppState {
         let claude_service = Arc::new(claude_service);
 
         // Initialize sync manager
-        let sync_manager = SyncManager::new(Arc::clone(&db), Arc::clone(&docker));
+        let sync_manager = SyncManager::new(
+            Arc::clone(&db),
+            Arc::clone(&docker),
+            Arc::clone(&claude_service),
+        );
         let sync_manager = Arc::new(sync_manager);
 
         log::info!("Application state initialized successfully");

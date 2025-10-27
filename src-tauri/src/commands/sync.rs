@@ -119,6 +119,7 @@ pub async fn is_session_syncing(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetGitUserRequest {
+    #[allow(dead_code)]
     pub project_id: String,
 }
 
@@ -141,7 +142,7 @@ pub async fn get_git_user_config(
 
     match docker.detect_local_git_user().await {
         Ok((name, email)) => Ok(GitUserResponse { name, email }),
-        Err(e) => Err(format!("Git user not configured: {}", e)),
+        Err(e) => Err(format!("Git user not configured: {e}")),
     }
 }
 
@@ -174,6 +175,6 @@ pub async fn commit_session_to_local(
         .await
         .map_err(|e| {
             log::error!("Failed to commit changes: {e}");
-            format!("Failed to commit changes: {}", e)
+            format!("Failed to commit changes: {e}")
         })
 }

@@ -327,7 +327,7 @@ impl DockerService {
             return Err(anyhow!("Git user.email is empty"));
         }
 
-        log::info!("Detected git user: {} <{}>", name, email);
+        log::info!("Detected git user: {name} <{email}>");
         Ok((name, email))
     }
 
@@ -349,9 +349,9 @@ impl DockerService {
         project_path: &std::path::Path,
         args: Vec<&str>,
     ) -> Result<String> {
+        use std::process::Stdio;
         use tokio::process::Command;
         use tokio::time::{timeout, Duration};
-        use std::process::Stdio;
 
         log::debug!("Executing git command on local: git {}", args.join(" "));
         log::debug!("  Working directory: {}", project_path.display());
@@ -362,21 +362,22 @@ impl DockerService {
             Command::new("git")
                 .current_dir(project_path)
                 .args(&args)
-                .stdin(Stdio::null())  // Don't wait for stdin
+                .stdin(Stdio::null()) // Don't wait for stdin
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
-                .output()
-        ).await;
+                .output(),
+        )
+        .await;
 
         let output = match result {
             Ok(Ok(output)) => {
                 log::debug!("  Command completed successfully");
                 output
-            },
+            }
             Ok(Err(e)) => {
-                log::error!("  Failed to execute git command: {}", e);
+                log::error!("  Failed to execute git command: {e}");
                 return Err(anyhow!("Failed to execute git command on local: {e}"));
-            },
+            }
             Err(_) => {
                 log::error!("  Git command timed out after 30 seconds");
                 return Err(anyhow!("Git command timed out after 30 seconds"));
@@ -395,7 +396,7 @@ impl DockerService {
         }
 
         if !output.status.success() {
-            return Err(anyhow!("Git command failed: {}", stderr));
+            return Err(anyhow!("Git command failed: {stderr}"));
         }
 
         Ok(stdout.to_string())
@@ -1066,6 +1067,7 @@ mod tests {
             .exec_command(
                 &container_id,
                 vec!["sh".into(), "-c".into(), "echo A && echo B".into()],
+                None,
                 None,
                 false,
             )
