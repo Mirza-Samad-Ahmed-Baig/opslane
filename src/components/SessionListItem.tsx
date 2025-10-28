@@ -44,9 +44,10 @@ export function SessionListItem({ session, project, isActive = false }: SessionL
       className={cn(
         'flex items-start gap-3 px-4 py-3 w-full text-left transition-colors',
         'hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-        isActive && 'bg-accent border-l-2 border-primary'
+        isActive && 'bg-accent/80 border-l-4 border-primary shadow-sm font-medium'
       )}
       aria-label={`Session: ${title}`}
+      aria-current={isActive ? 'page' : undefined}
     >
       {/* Status Dot */}
       <div
