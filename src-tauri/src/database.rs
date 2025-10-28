@@ -97,15 +97,17 @@ impl Database {
             r#"
             INSERT INTO sessions (
                 id, project_id, name, base_branch, status, is_deleted,
-                is_sync_active, sync_activated_at, sync_deactivated_at
-            ) VALUES (?, ?, ?, ?, 'created', 0, 0, NULL, NULL)
+                is_sync_active, sync_activated_at, sync_deactivated_at,
+                is_archived, archived_at
+            ) VALUES (?, ?, ?, ?, 'created', 0, 0, NULL, NULL, 0, NULL)
             RETURNING id, project_id, name, session_repo_path, base_branch,
                       container_id, container_name, container_branch,
                       status, error_message, volume_name, claude_session_id,
                       last_activity_at,
                       created_at, updated_at, is_deleted,
                       last_sync_at, sync_status,
-                      is_sync_active, sync_activated_at, sync_deactivated_at
+                      is_sync_active, sync_activated_at, sync_deactivated_at,
+                      is_archived, archived_at
             "#,
         )
         .bind(&id)
@@ -130,9 +132,10 @@ impl Database {
                    s.last_activity_at,
                    s.created_at, s.updated_at, s.is_deleted,
                    s.last_sync_at, s.sync_status,
-                   s.is_sync_active, s.sync_activated_at, s.sync_deactivated_at
+                   s.is_sync_active, s.sync_activated_at, s.sync_deactivated_at,
+                   s.is_archived, s.archived_at
             FROM sessions s
-            WHERE s.is_deleted = 0
+            WHERE s.is_deleted = 0 AND s.is_archived = 0
             ORDER BY s.created_at DESC
             "#,
         )
@@ -153,7 +156,8 @@ impl Database {
                    last_activity_at,
                    created_at, updated_at, is_deleted,
                    last_sync_at, sync_status,
-                   is_sync_active, sync_activated_at, sync_deactivated_at
+                   is_sync_active, sync_activated_at, sync_deactivated_at,
+                   is_archived, archived_at
             FROM sessions
             WHERE id = ? AND is_deleted = 0
             "#,
@@ -494,9 +498,10 @@ impl Database {
                    last_activity_at,
                    created_at, updated_at, is_deleted,
                    last_sync_at, sync_status,
-                   is_sync_active, sync_activated_at, sync_deactivated_at
+                   is_sync_active, sync_activated_at, sync_deactivated_at,
+                   is_archived, archived_at
             FROM sessions
-            WHERE project_id = ? AND is_deleted = 0
+            WHERE project_id = ? AND is_deleted = 0 AND is_archived = 0
             ORDER BY created_at DESC
             "#,
         )
@@ -505,6 +510,44 @@ impl Database {
         .await?;
 
         Ok(sessions)
+    }
+
+    /// Archive a session (sets is_archived = 1, archived_at = now)
+    #[allow(dead_code)]
+    pub async fn archive_session(&self, session_id: &str) -> Result<()> {
+        let result = sqlx::query(
+            r#"
+            UPDATE sessions
+            SET is_archived = 1, archived_at = datetime('now')
+            WHERE id = ? AND is_deleted = 0 AND is_archived = 0
+            "#,
+        )
+        .bind(session_id)
+        .execute(&self.pool)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(anyhow::anyhow!("Session not found or already archived"));
+        }
+
+        Ok(())
+    }
+
+    /// Unarchive a session (sets is_archived = 0, archived_at = NULL)
+    #[allow(dead_code)]
+    pub async fn unarchive_session(&self, session_id: &str) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE sessions
+            SET is_archived = 0, archived_at = NULL
+            WHERE id = ? AND is_deleted = 0
+            "#,
+        )
+        .bind(session_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
     }
 }
 
@@ -596,6 +639,8 @@ mod tests {
             "is_sync_active",
             "sync_activated_at",
             "sync_deactivated_at",
+            "is_archived",
+            "archived_at",
         ];
 
         assert_eq!(

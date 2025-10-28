@@ -67,6 +67,8 @@ pub fn run() {
             list_sessions_by_project,
             delete_session,
             get_container_logs,
+            archive_session,
+            unarchive_session,
             // Message commands
             send_message,
             get_messages,

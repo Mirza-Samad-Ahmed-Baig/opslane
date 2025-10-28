@@ -564,6 +564,22 @@ impl DockerService {
         Ok(())
     }
 
+    /// Stop a container quickly (with 3 second timeout)
+    /// Use this for operations like archiving where speed matters
+    #[allow(dead_code)]
+    pub async fn stop_container_fast(&self, container_id: &str) -> Result<()> {
+        log::info!("Stopping container {container_id} (3s timeout)...");
+
+        let options = StopContainerOptions { t: 3 };
+        self.client
+            .stop_container(container_id, Some(options))
+            .await
+            .map_err(|e| anyhow!("Failed to stop container {container_id}: {e}"))?;
+
+        log::info!("Container {container_id} stopped successfully");
+        Ok(())
+    }
+
     /// Remove a container (force remove)
     #[allow(dead_code)] // Will be used by SessionManager in Phase 3
     pub async fn remove_container(&self, container_id: &str) -> Result<()> {

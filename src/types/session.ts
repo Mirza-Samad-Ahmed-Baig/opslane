@@ -32,6 +32,10 @@ export interface Session {
   sync_activated_at?: string; // When was sync enabled?
   sync_deactivated_at?: string; // When was sync last disabled?
 
+  // Archiving fields
+  is_archived: boolean; // Whether session is archived
+  archived_at?: string; // ISO 8601 timestamp when archived
+
   created_at: string; // ISO 8601 timestamp
   updated_at: string; // ISO 8601 timestamp
   is_deleted: boolean;

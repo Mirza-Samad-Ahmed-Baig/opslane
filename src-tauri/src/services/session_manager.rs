@@ -1466,6 +1466,128 @@ impl SessionManager {
             log::error!("Failed to emit event {event}: {e}");
         }
     }
+
+    /// Archive a session (stops sync if active, stops container, sets is_archived = 1)
+    pub async fn archive_session(&self, session_id: &str) -> Result<()> {
+        log::info!("Archiving session: {session_id}");
+
+        // 1. Get session details
+        let session = self.get_session(session_id).await?;
+
+        // 2. Stop sync if active (as per user requirement)
+        if session.is_sync_active {
+            log::info!("Session has active sync, stopping sync before archiving");
+
+            // Get project to disable sync
+            let project = self.db.get_project(&session.project_id).await?;
+            let now = chrono::Utc::now().to_rfc3339();
+
+            // Use database transaction to stop sync
+            let mut tx = self.db.pool().begin().await?;
+
+            // Clear active session from project
+            sqlx::query(
+                "UPDATE projects SET active_sync_session_id = NULL, active_sync_started_at = NULL
+                 WHERE id = ?",
+            )
+            .bind(&project.id)
+            .execute(&mut *tx)
+            .await?;
+
+            // Mark session sync as inactive
+            sqlx::query(
+                "UPDATE sessions SET is_sync_active = 0, sync_deactivated_at = ?
+                 WHERE id = ?",
+            )
+            .bind(&now)
+            .bind(session_id)
+            .execute(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+
+            log::info!("Stopped sync for session {session_id} before archiving");
+        }
+
+        // 3. Update database to mark as archived (do this immediately for instant UI response)
+        self.db
+            .archive_session(session_id)
+            .await
+            .map_err(|e| anyhow!("Failed to archive session in database: {e}"))?;
+
+        log::info!("Session {session_id} marked as archived in database");
+
+        // 4. Stop Docker container in background (don't wait for it)
+        if let Some(container_id) = session.container_id.clone() {
+            let docker = self.docker.clone();
+            let db = self.db.clone();
+            let session_id_clone = session_id.to_string();
+
+            tokio::spawn(async move {
+                log::info!(
+                    "Background task: Stopping container {container_id} for archived session"
+                );
+
+                // Verify session is still archived before stopping (prevents race condition)
+                match db.get_session(&session_id_clone).await {
+                    Ok(current_session) => {
+                        if !current_session.is_archived {
+                            log::info!("Session {session_id_clone} was unarchived - skipping container stop");
+                            return;
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to verify session status before stopping container: {e}"
+                        );
+                        return;
+                    }
+                }
+
+                // Use fast stop (3s timeout) for archiving
+                if let Err(e) = docker.stop_container_fast(&container_id).await {
+                    log::warn!(
+                        "Failed to stop container {container_id} (may already be stopped): {e}"
+                    );
+                } else {
+                    log::info!("Stopped container {container_id}");
+                }
+            });
+        }
+
+        log::info!("Successfully archived session {session_id}");
+        Ok(())
+    }
+
+    /// Unarchive a session (sets is_archived = 0, restarts container)
+    pub async fn unarchive_session(&self, session_id: &str) -> Result<()> {
+        log::info!("Unarchiving session: {session_id}");
+
+        // 1. Get session details
+        let session = self.get_session(session_id).await?;
+
+        // 2. Update database first
+        self.db
+            .unarchive_session(session_id)
+            .await
+            .map_err(|e| anyhow!("Failed to unarchive session in database: {e}"))?;
+
+        // 3. Restart Docker container if it exists
+        if let Some(container_id) = &session.container_id {
+            log::info!("Restarting container {container_id} for unarchived session");
+
+            if let Err(e) = self.docker.start_container(container_id).await {
+                log::error!("Failed to restart container {container_id}: {e}");
+                // Don't fail the whole operation - session is still unarchived in DB
+                // User can manually restart or recreate if needed
+            } else {
+                log::info!("Restarted container {container_id}");
+            }
+        }
+
+        log::info!("Successfully unarchived session {session_id}");
+        Ok(())
+    }
 }
 
 #[cfg(test)]

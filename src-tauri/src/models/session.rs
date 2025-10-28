@@ -46,6 +46,10 @@ pub struct Session {
     pub is_sync_active: bool, // Is two-way sync enabled for this session?
     pub sync_activated_at: Option<String>, // When was sync enabled?
     pub sync_deactivated_at: Option<String>, // When was sync last disabled?
+
+    // Archiving fields
+    pub is_archived: bool,           // Whether session is archived
+    pub archived_at: Option<String>, // ISO 8601 timestamp when archived
 }
 
 impl Session {

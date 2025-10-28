@@ -93,6 +93,20 @@ export function useSessions() {
         }
       );
       unlisteners.push(nameUpdatedUnlisten);
+
+      // Listen for archived sessions
+      const archivedUnlisten = await listen<SessionEvent>('session-archived', (event) => {
+        logger.info('Session archived', { sessionId: event.payload.session_id });
+        queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      });
+      unlisteners.push(archivedUnlisten);
+
+      // Listen for unarchived sessions
+      const unarchivedUnlisten = await listen<SessionEvent>('session-unarchived', (event) => {
+        logger.info('Session unarchived', { sessionId: event.payload.session_id });
+        queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      });
+      unlisteners.push(unarchivedUnlisten);
     };
 
     setupListeners();
@@ -203,6 +217,68 @@ export function useDeleteSession() {
     onError: (error: Error) => {
       const message = formatErrorMessage(error);
       toast.error(`Failed to delete session: ${message}`);
+    },
+  });
+}
+
+/**
+ * Mutation hook for archiving a session
+ * Stops sync if active, stops container, marks as archived
+ */
+export function useArchiveSession() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (sessionId: string) => {
+      logger.debug('Archiving session', { sessionId });
+      try {
+        await invoke<void>('archive_session', { sessionId });
+        logger.info('Session archived successfully', { sessionId });
+      } catch (error) {
+        logger.error('Failed to archive session', error as Error);
+        throw error;
+      }
+    },
+    onSuccess: (_, sessionId) => {
+      // Invalidate and refetch to remove archived session from list
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      logger.info('Session archived from UI', { sessionId });
+      toast.success('Session archived successfully');
+    },
+    onError: (error: Error) => {
+      const message = formatErrorMessage(error);
+      toast.error(`Failed to archive session: ${message}`);
+    },
+  });
+}
+
+/**
+ * Mutation hook for unarchiving a session
+ * Marks as unarchived, restarts container
+ */
+export function useUnarchiveSession() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (sessionId: string) => {
+      logger.debug('Unarchiving session', { sessionId });
+      try {
+        await invoke<void>('unarchive_session', { sessionId });
+        logger.info('Session unarchived successfully', { sessionId });
+      } catch (error) {
+        logger.error('Failed to unarchive session', error as Error);
+        throw error;
+      }
+    },
+    onSuccess: (_, sessionId) => {
+      // Invalidate and refetch to show unarchived session in list
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      logger.info('Session unarchived from UI', { sessionId });
+      toast.success('Session unarchived successfully');
+    },
+    onError: (error: Error) => {
+      const message = formatErrorMessage(error);
+      toast.error(`Failed to unarchive session: ${message}`);
     },
   });
 }

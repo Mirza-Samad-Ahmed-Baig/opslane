@@ -196,3 +196,63 @@ pub async fn get_container_logs(
             format!("Failed to get logs: {e}")
         })
 }
+
+/// Archive a session (stops sync if active, stops container, marks as archived)
+#[tauri::command]
+pub async fn archive_session(
+    session_id: String,
+    state: State<'_, AppState>,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    log::info!("Archiving session: {session_id}");
+
+    state
+        .session_manager
+        .archive_session(&session_id)
+        .await
+        .map_err(|e| {
+            log::error!("Failed to archive session {session_id}: {e}");
+            format!("Failed to archive session: {e}")
+        })?;
+
+    // Emit session-archived event for frontend to update session list
+    let _ = app_handle.emit(
+        "session-archived",
+        serde_json::json!({
+            "session_id": session_id,
+            "timestamp": Utc::now().to_rfc3339(),
+        }),
+    );
+
+    Ok(())
+}
+
+/// Unarchive a session (marks as unarchived, restarts container)
+#[tauri::command]
+pub async fn unarchive_session(
+    session_id: String,
+    state: State<'_, AppState>,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    log::info!("Unarchiving session: {session_id}");
+
+    state
+        .session_manager
+        .unarchive_session(&session_id)
+        .await
+        .map_err(|e| {
+            log::error!("Failed to unarchive session {session_id}: {e}");
+            format!("Failed to unarchive session: {e}")
+        })?;
+
+    // Emit session-unarchived event for frontend to update session list
+    let _ = app_handle.emit(
+        "session-unarchived",
+        serde_json::json!({
+            "session_id": session_id,
+            "timestamp": Utc::now().to_rfc3339(),
+        }),
+    );
+
+    Ok(())
+}
