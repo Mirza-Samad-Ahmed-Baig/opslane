@@ -22,7 +22,7 @@ import { SessionDetailPage } from '@/pages/SessionDetailPage';
 import { useDockerStatus, useCreateSession, useProjects, useGetOrCreateProject } from '@/hooks';
 import type { SessionProgressEvent, NewSession } from '@/types/session';
 import type { Project } from '@/types/project';
-import type { ImageAttachment } from '@/types/messages';
+import type { ImageAttachment, ContentBlockInput } from '@/types/messages';
 import { logger } from './utils/logger';
 import { toastPatterns } from '@/lib/toast-patterns';
 import { checkNotificationPermission } from '@/utils/notifications';
@@ -78,14 +78,34 @@ function HomePage() {
       imageCount: images?.length || 0,
     });
 
+    // Build content blocks from message and images
+    const contentBlocks: ContentBlockInput[] = [];
+
+    if (tempMessage) {
+      contentBlocks.push({
+        type: 'text',
+        text: tempMessage,
+      });
+    }
+
+    if (images?.length) {
+      images.forEach((img) => {
+        contentBlocks.push({
+          type: 'image',
+          source: img.source,
+        });
+      });
+    }
+
     try {
-      // Create session (backend will auto-generate title from initial_message)
+      // Generate session name from message (first 50 chars)
+      const sessionName = tempMessage.slice(0, 50);
+
+      // Create session (no initial_message field)
       const newSession: NewSession = {
         project_id: selectedProject.id,
-        // name is optional - backend will generate heuristic title immediately,
-        // then upgrade to AI-generated title in background
+        name: sessionName,
         base_branch: 'main',
-        initial_message: tempMessage,
       };
 
       const session = await createSession.mutateAsync({
@@ -110,8 +130,8 @@ function HomePage() {
 
       navigate(`/session/${session.id}`, {
         state: {
-          initialMessage: tempMessage,
-          initialImages: images, // Pass images along with initial message
+          // Store content blocks for auto-send after session is ready
+          initialContentBlocks: contentBlocks,
           isNewSession: true,
           // Pass true if not ready yet, so chat can show "Setting up..." indicator
           isSettingUp: session.status !== 'ready',

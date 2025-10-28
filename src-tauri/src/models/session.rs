@@ -34,9 +34,6 @@ pub struct Session {
     pub claude_session_id: Option<String>, // Claude's session ID
     pub last_activity_at: Option<String>, // For idle detection
 
-    // Optimistic UI: Store initial message for instant display
-    pub initial_message: Option<String>,
-
     pub created_at: String,
     pub updated_at: String,
     pub is_deleted: bool,
@@ -62,25 +59,21 @@ impl Session {
 /// NewSession - input for creating a session
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewSession {
-    pub project_id: String,   // Foreign key to projects
-    pub name: Option<String>, // Optional - will auto-generate if not provided
+    pub project_id: String, // Foreign key to projects
+    pub name: String,
     pub base_branch: String,
-    pub initial_message: Option<String>, // Optional initial message to send to Claude
 }
 
 impl NewSession {
     /// Validate new session input
     #[allow(dead_code)]
     pub fn validate(&self) -> Result<(), ValidationError> {
-        // Name is now optional, only validate if provided
-        if let Some(ref name) = self.name {
-            if name.trim().is_empty() {
-                return Err(ValidationError::EmptyName);
-            }
+        if self.name.trim().is_empty() {
+            return Err(ValidationError::EmptyName);
+        }
 
-            if name.len() > 100 {
-                return Err(ValidationError::NameTooLong);
-            }
+        if self.name.len() > 100 {
+            return Err(ValidationError::NameTooLong);
         }
 
         if self.base_branch.trim().is_empty() {
@@ -99,21 +92,8 @@ mod tests {
     fn test_new_session_validation() {
         let new_session = NewSession {
             project_id: "test-project-id".to_string(),
-            name: Some("Test Session".to_string()),
+            name: "Test Session".to_string(),
             base_branch: "main".to_string(),
-            initial_message: None,
-        };
-
-        assert!(new_session.validate().is_ok());
-    }
-
-    #[test]
-    fn test_new_session_no_name_is_valid() {
-        let new_session = NewSession {
-            project_id: "test-project-id".to_string(),
-            name: None,
-            base_branch: "main".to_string(),
-            initial_message: None,
         };
 
         assert!(new_session.validate().is_ok());
@@ -123,9 +103,8 @@ mod tests {
     fn test_new_session_empty_name_fails() {
         let new_session = NewSession {
             project_id: "test-project-id".to_string(),
-            name: Some("".to_string()),
+            name: "".to_string(),
             base_branch: "main".to_string(),
-            initial_message: None,
         };
 
         assert!(new_session.validate().is_err());
@@ -135,9 +114,8 @@ mod tests {
     fn test_new_session_long_name_fails() {
         let new_session = NewSession {
             project_id: "test-project-id".to_string(),
-            name: Some("a".repeat(101)),
+            name: "a".repeat(101),
             base_branch: "main".to_string(),
-            initial_message: None,
         };
 
         assert!(new_session.validate().is_err());

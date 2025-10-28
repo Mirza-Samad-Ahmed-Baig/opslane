@@ -96,13 +96,13 @@ impl Database {
         let session = sqlx::query_as::<_, crate::models::Session>(
             r#"
             INSERT INTO sessions (
-                id, project_id, name, base_branch, initial_message, status, is_deleted,
+                id, project_id, name, base_branch, status, is_deleted,
                 is_sync_active, sync_activated_at, sync_deactivated_at
-            ) VALUES (?, ?, ?, ?, ?, 'created', 0, 0, NULL, NULL)
+            ) VALUES (?, ?, ?, ?, 'created', 0, 0, NULL, NULL)
             RETURNING id, project_id, name, session_repo_path, base_branch,
                       container_id, container_name, container_branch,
                       status, error_message, volume_name, claude_session_id,
-                      last_activity_at, initial_message,
+                      last_activity_at,
                       created_at, updated_at, is_deleted,
                       last_sync_at, sync_status,
                       is_sync_active, sync_activated_at, sync_deactivated_at
@@ -112,7 +112,6 @@ impl Database {
         .bind(&new.project_id)
         .bind(&new.name)
         .bind(&new.base_branch)
-        .bind(&new.initial_message)
         .fetch_one(&self.pool)
         .await?;
 
@@ -128,7 +127,7 @@ impl Database {
             SELECT s.id, s.project_id, s.name, s.session_repo_path, s.base_branch,
                    s.container_id, s.container_name, s.container_branch,
                    s.status, s.error_message, s.volume_name, s.claude_session_id,
-                   s.last_activity_at, s.initial_message,
+                   s.last_activity_at,
                    s.created_at, s.updated_at, s.is_deleted,
                    s.last_sync_at, s.sync_status,
                    s.is_sync_active, s.sync_activated_at, s.sync_deactivated_at
@@ -151,7 +150,7 @@ impl Database {
             SELECT id, project_id, name, session_repo_path, base_branch,
                    container_id, container_name, container_branch,
                    status, error_message, volume_name, claude_session_id,
-                   last_activity_at, initial_message,
+                   last_activity_at,
                    created_at, updated_at, is_deleted,
                    last_sync_at, sync_status,
                    is_sync_active, sync_activated_at, sync_deactivated_at
@@ -354,32 +353,6 @@ impl Database {
         Ok(())
     }
 
-    /// Update session name/title
-    #[allow(dead_code)]
-    pub async fn update_session_name(&self, session_id: &str, name: &str) -> Result<()> {
-        // Validate name length
-        if name.is_empty() {
-            return Err(anyhow::anyhow!("Session name cannot be empty"));
-        }
-        if name.len() > 100 {
-            return Err(anyhow::anyhow!("Session name too long (max 100 chars)"));
-        }
-
-        sqlx::query(
-            r#"
-            UPDATE sessions
-            SET name = ?, updated_at = datetime('now')
-            WHERE id = ?
-            "#,
-        )
-        .bind(name)
-        .bind(session_id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
     // ============================================================================
     // Projects
     // ============================================================================
@@ -518,9 +491,10 @@ impl Database {
             SELECT id, project_id, name, session_repo_path, base_branch,
                    container_id, container_name, container_branch,
                    status, error_message, volume_name, claude_session_id,
-                   last_activity_at, initial_message,
+                   last_activity_at,
                    created_at, updated_at, is_deleted,
-                   last_sync_at, sync_status
+                   last_sync_at, sync_status,
+                   is_sync_active, sync_activated_at, sync_deactivated_at
             FROM sessions
             WHERE project_id = ? AND is_deleted = 0
             ORDER BY created_at DESC
@@ -614,7 +588,6 @@ mod tests {
             "volume_name",
             "claude_session_id",
             "last_activity_at",
-            "initial_message",
             "created_at",
             "updated_at",
             "is_deleted",
@@ -646,7 +619,6 @@ mod tests {
             project_id: project.id.clone(),
             name: "Test Session".to_string(),
             base_branch: "main".to_string(),
-            initial_message: None,
         };
 
         let session = db.create_session(new_session).await.unwrap();
@@ -683,7 +655,6 @@ mod tests {
                 project_id: project.id.clone(),
                 name: format!("Session {}", i + 1),
                 base_branch: "main".to_string(),
-                initial_message: None,
             };
             db.create_session(new_session).await.unwrap();
         }
@@ -706,7 +677,6 @@ mod tests {
             project_id: project.id,
             name: "Find Me".to_string(),
             base_branch: "main".to_string(),
-            initial_message: None,
         };
 
         let created = db.create_session(new_session).await.unwrap();
@@ -743,7 +713,6 @@ mod tests {
             project_id: project.id,
             name: "Status Test".to_string(),
             base_branch: "main".to_string(),
-            initial_message: None,
         };
 
         let session = db.create_session(new_session).await.unwrap();
@@ -771,7 +740,6 @@ mod tests {
             project_id: project.id,
             name: "Container Test".to_string(),
             base_branch: "main".to_string(),
-            initial_message: None,
         };
 
         let session = db.create_session(new_session).await.unwrap();
@@ -812,7 +780,6 @@ mod tests {
             project_id: project.id,
             name: "Delete Me".to_string(),
             base_branch: "main".to_string(),
-            initial_message: None,
         };
 
         let session = db.create_session(new_session).await.unwrap();
@@ -849,7 +816,6 @@ mod tests {
                 project_id: project.id,
                 name: format!("Session {i}"),
                 base_branch: "main".to_string(),
-                initial_message: None,
             };
             let session = db.create_session(new_session).await.unwrap();
             session_ids.push(session.id);
@@ -879,7 +845,6 @@ mod tests {
             project_id: project.id,
             name: "Volume Test".to_string(),
             base_branch: "main".to_string(),
-            initial_message: None,
         };
 
         let session = db.create_session(new_session).await.unwrap();
@@ -911,7 +876,6 @@ mod tests {
             project_id: project.id,
             name: "Claude ID Test".to_string(),
             base_branch: "main".to_string(),
-            initial_message: None,
         };
 
         let session = db.create_session(new_session).await.unwrap();
@@ -943,7 +907,6 @@ mod tests {
             project_id: project.id,
             name: "Full Persistence Test".to_string(),
             base_branch: "main".to_string(),
-            initial_message: None,
         };
 
         let session = db.create_session(new_session).await.unwrap();

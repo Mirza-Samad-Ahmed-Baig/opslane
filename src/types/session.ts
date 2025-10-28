@@ -23,9 +23,6 @@ export interface Session {
   claude_session_id: string | null;
   last_activity_at: string | null;
 
-  // Optimistic UI: Store initial message for instant display (Phase 1)
-  initial_message: string | null;
-
   // Sync tracking
   last_sync_at?: string;
   sync_status?: 'idle' | 'syncing' | 'synced' | 'error';
@@ -46,9 +43,8 @@ export interface Session {
  */
 export interface NewSession {
   project_id: string; // NEW: FK to projects
-  name?: string; // Optional - will auto-generate if not provided
+  name: string;
   base_branch: string;
-  initial_message?: string; // Optional initial message to send to Claude
 }
 
 /**
@@ -66,7 +62,6 @@ export interface SessionFormErrors {
   name?: string;
   local_repo_path?: string;
   base_branch?: string;
-  initial_message?: string; // For initial message validation
   general?: string; // For non-field-specific errors (e.g., Docker unavailability)
 }
 

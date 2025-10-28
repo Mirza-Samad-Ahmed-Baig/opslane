@@ -548,35 +548,6 @@ impl SessionManager {
             log::warn!("Failed to configure git safe.directory (continuing anyway): {e}");
         }
 
-        // Step 5.5: Configure git user identity from host
-        log::info!("Configuring git user identity for session {session_id}");
-        match self.docker.detect_local_git_user().await {
-            Ok((name, email)) => {
-                if let Err(e) = self
-                    .docker
-                    .configure_git_user(&container_id, &name, &email)
-                    .await
-                {
-                    log::warn!(
-                        "Failed to configure git user identity (continuing anyway): {e}. \
-                        Commits may fail until git is configured."
-                    );
-                } else {
-                    log::info!(
-                        "Git user identity configured successfully for session {session_id}"
-                    );
-                }
-            }
-            Err(e) => {
-                log::warn!(
-                    "Could not detect git user from host system: {e}. \
-                    Container commits will fail. Please configure git on your host: \
-                    git config --global user.name \"Your Name\" && \
-                    git config --global user.email \"you@example.com\""
-                );
-            }
-        }
-
         // Step 5b: Reset repository to committed state only
         log::info!("Resetting repository to committed state for session {session_id}");
         self.docker
@@ -663,11 +634,10 @@ impl SessionManager {
 
         log::info!("========================================");
         log::info!("create_session called");
-        log::info!("  name: {:?}", new.name);
+        log::info!("  name: {}", new.name);
         log::info!("  project: {}", project.name);
         log::info!("  path: {local_repo_path}");
         log::info!("  branch: {}", new.base_branch);
-        log::info!("  has_initial_message: {}", new.initial_message.is_some());
         log::info!("========================================");
 
         // Define total steps for progress tracking

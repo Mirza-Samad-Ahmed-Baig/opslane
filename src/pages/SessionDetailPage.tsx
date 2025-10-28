@@ -2,6 +2,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Loader2, AlertCircle, ChevronDown, ChevronUp, ArrowUpDown } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
+import { invoke } from '@tauri-apps/api/core';
 import { Button } from '@/components/ui/button';
 import { useSession, useProject } from '@/hooks';
 import { useActiveSync } from '@/hooks/useActiveSync';
@@ -13,11 +14,10 @@ import { EnableSyncConfirmation } from '@/components/sync/EnableSyncConfirmation
 import { HeaderSyncStatus } from '@/components/sync/HeaderSyncStatus';
 import { NotificationBell } from '@/components/notifications/NotificationBell';
 import { logger } from '@/utils/logger';
-import type { DisplayMessage, ImageAttachment } from '@/types/messages';
+import type { DisplayMessage, ImageAttachment, ContentBlockInput } from '@/types/messages';
 
 interface SessionDetailLocationState {
-  initialMessage?: string;
-  initialImages?: ImageAttachment[];
+  initialContentBlocks?: ContentBlockInput[];
   isNewSession?: boolean;
   isSettingUp?: boolean;
 }
@@ -53,9 +53,9 @@ export function SessionDetailPage() {
   } = useActiveSync(session?.project_id || '');
   const isSyncActive = session ? isSessionActive(session.id) : false;
 
-  // Extract initialImages from navigation state (passed from Quick Start)
+  // Extract initialContentBlocks from navigation state (passed from Quick Start)
   const state = location.state as SessionDetailLocationState | null;
-  const initialImages = state?.initialImages;
+  const initialContentBlocks = state?.initialContentBlocks;
 
   // Determine if session is setting up based on actual status
   const isSettingUp = session && session.status !== 'ready' && session.status !== 'error';
@@ -101,21 +101,35 @@ export function SessionDetailPage() {
     }
   };
 
-  // Phase 1: Create optimistic message from session.initial_message
+  // Create optimistic message from initialContentBlocks
   // This provides instant feedback while container is being set up in the background
   const optimisticMessage = useMemo((): DisplayMessage | null => {
-    if (!session?.initial_message) return null;
+    if (!initialContentBlocks?.length) return null;
+
+    // Extract text from content blocks
+    const textBlocks = initialContentBlocks.filter(
+      (block): block is { type: 'text'; text: string } => block.type === 'text'
+    );
+    const text = textBlocks.map((b) => b.text).join(' ') || undefined;
+
+    // Extract images from content blocks
+    const imageBlocks = initialContentBlocks.filter(
+      (block): block is { type: 'image'; source: ImageAttachment['source'] } =>
+        block.type === 'image'
+    );
+    const images: ImageAttachment[] | undefined =
+      imageBlocks.length > 0 ? imageBlocks.map((block) => ({ source: block.source })) : undefined;
 
     return {
       id: 'optimistic-initial',
       uuid: 'optimistic-initial',
       role: 'user',
-      text: session.initial_message,
-      images: initialImages, // Include images from Quick Start navigation state
+      text,
+      images,
       tools: [],
-      status: 'complete',
+      status: 'sending', // Mark as 'sending' until auto-send completes
     };
-  }, [session?.initial_message, initialImages]);
+  }, [initialContentBlocks]);
 
   // Handle enable sync mode
   const handleEnableSync = () => {
@@ -154,6 +168,47 @@ export function SessionDetailPage() {
       queryClient.removeQueries({ queryKey: ['session', id] });
     };
   }, [id, queryClient]);
+
+  // Auto-send initial message when session becomes ready
+  useEffect(() => {
+    // Only auto-send if:
+    // 1. We have content blocks from Quick Start
+    // 2. Session just became ready
+    // 3. We haven't sent the message yet
+    if (!initialContentBlocks?.length || !session || session.status !== 'ready') {
+      return;
+    }
+
+    // Track if we've already sent to avoid duplicate sends
+    const hasBeenSent = sessionStorage.getItem(`initial-sent-${session.id}`);
+    if (hasBeenSent) {
+      return;
+    }
+
+    logger.info('[SessionDetail] Auto-sending initial message', {
+      sessionId: session.id,
+      blockCount: initialContentBlocks.length,
+    });
+
+    // Mark as sent immediately to prevent race conditions
+    sessionStorage.setItem(`initial-sent-${session.id}`, 'true');
+
+    // Send through the standard send_message command
+    invoke('send_message', {
+      sessionId: session.id,
+      contentBlocks: initialContentBlocks,
+      model: null, // Use default model
+    }).catch((error) => {
+      logger.error('[SessionDetail] Failed to auto-send initial message', error);
+      // Clear the flag so user can retry
+      sessionStorage.removeItem(`initial-sent-${session.id}`);
+    });
+
+    // Cleanup: Remove flag when navigating away
+    return () => {
+      sessionStorage.removeItem(`initial-sent-${session.id}`);
+    };
+  }, [session?.id, session?.status, initialContentBlocks]);
 
   // Loading state (Design Principle #2: Instant Feedback)
   if (isLoading) {

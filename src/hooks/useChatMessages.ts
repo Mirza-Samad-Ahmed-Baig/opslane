@@ -19,7 +19,6 @@ import {
 
 interface UseChatMessagesOptions {
   sessionId: string;
-  initialMessage?: string;
   onStreamStart?: () => void;
   onStreamComplete?: () => void;
   onError?: (error: string) => void;
@@ -42,26 +41,12 @@ function generateMessageId(prefix: string): string {
 
 export function useChatMessages({
   sessionId,
-  initialMessage,
   onStreamStart,
   onStreamComplete,
   onError,
 }: UseChatMessagesOptions): UseChatMessagesReturn {
-  // Initialize with initial message if provided
-  const [messages, setMessages] = useState<DisplayMessage[]>(() => {
-    if (initialMessage) {
-      return [
-        {
-          id: generateMessageId('initial'),
-          uuid: generateMessageId('initial-uuid'),
-          role: 'user',
-          text: initialMessage,
-          status: 'sent',
-        },
-      ];
-    }
-    return [];
-  });
+  // Initialize with empty message array
+  const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -81,46 +66,26 @@ export function useChatMessages({
 
   // Transform backend message to display format
   const transformMessage = useCallback((envelope: MessageEnvelope): DisplayMessage | null => {
-    // LAYER 1: Filter sidechain messages (agent internal conversations)
-    // These are Claude Code's internal agent executions and should never be shown
-    if (envelope.isSidechain) {
-      console.debug(
-        `[useChatMessages] Filtered sidechain message (uuid: ${envelope.uuid}, type: ${envelope.messageType})`
-      );
-      return null;
-    }
-
-    // LAYER 2: Filter slash command execution messages
-    // These contain XML tags like <command-message>, <command-name>, <command-args>
-    // Check if any text blocks contain these command tags
-    const textBlocks = envelope.contentBlocks.filter(isTextBlock);
-    const hasCommandTags = textBlocks.some(
-      (block) =>
-        block.text.includes('<command-message>') ||
-        block.text.includes('<command-name>') ||
-        block.text.includes('<command-args>')
-    );
-
-    if (hasCommandTags) {
-      console.debug(
-        `[useChatMessages] Filtered command execution message (uuid: ${envelope.uuid}, type: ${envelope.messageType})`
-      );
-      return null;
-    }
-
-    // LAYER 3: Type-based whitelist
-    // Only display conversation and file history messages
-    // This filters out: system, warmup, heartbeat, connected, complete
+    // WHITELIST: Only display conversation and file history messages
     const DISPLAYABLE_TYPES = ['user', 'assistant', 'file-history-snapshot'];
 
     if (!DISPLAYABLE_TYPES.includes(envelope.messageType)) {
+      // Filter out internal messages: system, warmup, heartbeat, connected, complete
       console.debug(
         `[useChatMessages] Filtered non-displayable message type: ${envelope.messageType}`
       );
       return null;
     }
 
-    // Use type guards for safer extraction (textBlocks already declared above for filtering)
+    // Additional safety check for system messages
+    // (Claude Code may send system messages with various subtypes)
+    if (envelope.messageType === 'system') {
+      console.debug('[useChatMessages] Filtered system message');
+      return null;
+    }
+
+    // Use type guards for safer extraction
+    const textBlocks = envelope.contentBlocks.filter(isTextBlock);
     const text = textBlocks.map((b) => b.text).join('\n');
 
     const toolUseBlocks = envelope.contentBlocks.filter(isToolUseBlock);
