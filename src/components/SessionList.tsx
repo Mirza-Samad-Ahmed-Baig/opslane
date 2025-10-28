@@ -49,7 +49,7 @@ export function SessionList({ activeSessionId }: SessionListProps) {
 
   if (sessionsLoading || projectsLoading) {
     return (
-      <div className="h-full flex flex-col items-center justify-center border-r bg-muted/30 p-8">
+      <div className="h-full flex flex-col items-center justify-center p-8">
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
       </div>
     );
@@ -57,7 +57,7 @@ export function SessionList({ activeSessionId }: SessionListProps) {
 
   if (!sessions || sessions.length === 0) {
     return (
-      <div className="h-full flex flex-col border-r bg-muted/30 p-4">
+      <div className="h-full flex flex-col p-4">
         <p className="text-xs text-muted-foreground mb-3">No sessions yet</p>
         <p className="text-xs text-muted-foreground">
           Use the quickstart form to create your first session.
@@ -67,7 +67,7 @@ export function SessionList({ activeSessionId }: SessionListProps) {
   }
 
   return (
-    <div className="h-full flex flex-col border-r bg-muted/30 min-h-0">
+    <div className="h-full flex flex-col min-h-0">
       <div className="flex-1 overflow-y-auto py-2 min-h-0">
         {sortedSessions.map((session) => {
           const project = projectMap.get(session.project_id);
