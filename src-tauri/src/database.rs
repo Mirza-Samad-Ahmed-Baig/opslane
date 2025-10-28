@@ -354,6 +354,32 @@ impl Database {
         Ok(())
     }
 
+    /// Update session name/title
+    #[allow(dead_code)]
+    pub async fn update_session_name(&self, session_id: &str, name: &str) -> Result<()> {
+        // Validate name length
+        if name.is_empty() {
+            return Err(anyhow::anyhow!("Session name cannot be empty"));
+        }
+        if name.len() > 100 {
+            return Err(anyhow::anyhow!("Session name too long (max 100 chars)"));
+        }
+
+        sqlx::query(
+            r#"
+            UPDATE sessions
+            SET name = ?, updated_at = datetime('now')
+            WHERE id = ?
+            "#,
+        )
+        .bind(name)
+        .bind(session_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
     // ============================================================================
     // Projects
     // ============================================================================

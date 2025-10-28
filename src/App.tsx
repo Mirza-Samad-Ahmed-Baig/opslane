@@ -79,13 +79,11 @@ function HomePage() {
     });
 
     try {
-      // Generate session name from message (first 50 chars)
-      const sessionName = tempMessage.slice(0, 50);
-
-      // Create session
+      // Create session (backend will auto-generate title from initial_message)
       const newSession: NewSession = {
         project_id: selectedProject.id,
-        name: sessionName,
+        // name is optional - backend will generate heuristic title immediately,
+        // then upgrade to AI-generated title in background
         base_branch: 'main',
         initial_message: tempMessage,
       };

@@ -7,14 +7,16 @@ import type { NewSessionFormData, SessionFormErrors } from '@/types';
 export function validateSessionForm(data: NewSessionFormData): SessionFormErrors | null {
   const errors: SessionFormErrors = {};
 
-  // Name validation
-  if (!data.name.trim()) {
-    errors.name = 'Session name is required';
-  } else if (data.name.length > 100) {
-    errors.name = 'Session name must be 100 characters or less';
-  } else if (!/^[a-zA-Z0-9\s\-_]+$/.test(data.name)) {
-    errors.name =
-      'Session name can only contain letters, numbers, spaces, hyphens, and underscores';
+  // Name validation (optional - only validate if provided)
+  if (data.name !== undefined) {
+    if (!data.name.trim()) {
+      errors.name = 'Session name cannot be empty if provided';
+    } else if (data.name.length > 100) {
+      errors.name = 'Session name must be 100 characters or less';
+    } else if (!/^[a-zA-Z0-9\s\-_]+$/.test(data.name)) {
+      errors.name =
+        'Session name can only contain letters, numbers, spaces, hyphens, and underscores';
+    }
   }
 
   // Repository path validation

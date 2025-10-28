@@ -663,7 +663,7 @@ impl SessionManager {
 
         log::info!("========================================");
         log::info!("create_session called");
-        log::info!("  name: {}", new.name);
+        log::info!("  name: {:?}", new.name);
         log::info!("  project: {}", project.name);
         log::info!("  path: {local_repo_path}");
         log::info!("  branch: {}", new.base_branch);

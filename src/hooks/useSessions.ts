@@ -78,6 +78,21 @@ export function useSessions() {
         queryClient.invalidateQueries({ queryKey: ['sessions'] });
       });
       unlisteners.push(deletedUnlisten);
+
+      // Listen for session name updates (AI title generation)
+      const nameUpdatedUnlisten = await listen<{ session_id: string; name: string }>(
+        'session-name-updated',
+        (event) => {
+          logger.info('Session name updated', {
+            sessionId: event.payload.session_id,
+            name: event.payload.name,
+          });
+          // Invalidate queries to refresh session list
+          queryClient.invalidateQueries({ queryKey: ['sessions'] });
+          queryClient.invalidateQueries({ queryKey: ['session', event.payload.session_id] });
+        }
+      );
+      unlisteners.push(nameUpdatedUnlisten);
     };
 
     setupListeners();

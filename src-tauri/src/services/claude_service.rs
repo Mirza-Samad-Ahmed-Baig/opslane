@@ -104,6 +104,86 @@ pub struct UsageInfo {
 /// Working directory /workspace/repo becomes -workspace-repo in Claude's sanitized path format
 const CLAUDE_PROJECTS_DIR: &str = "/home/claude/.claude/projects/-workspace-repo";
 
+/// Generate a heuristic title from a user message by truncating at word boundary
+///
+/// Takes first 50 characters and breaks at last word boundary.
+/// Adds "..." if truncated.
+pub fn generate_heuristic_title(message: &str) -> String {
+    const MAX_LENGTH: usize = 50;
+
+    // Remove leading/trailing whitespace
+    let trimmed = message.trim();
+
+    // If message is short enough, use as-is
+    if trimmed.len() <= MAX_LENGTH {
+        return trimmed.to_string();
+    }
+
+    // Take first MAX_LENGTH chars
+    let truncated: String = trimmed.chars().take(MAX_LENGTH).collect();
+
+    // Find last word boundary (space)
+    if let Some(last_space) = truncated.rfind(' ') {
+        format!("{}...", &truncated[..last_space])
+    } else {
+        // No spaces found, just truncate
+        format!("{truncated}...")
+    }
+}
+
+/// Parse title from Claude CLI JSON output
+///
+/// Claude CLI with --output-format json returns a final "result" object
+/// containing the generated title.
+fn parse_title_from_claude_output(output: &str) -> Result<String> {
+    // Parse the JSON output (single line with --output-format json)
+    let parsed: JsonValue =
+        serde_json::from_str(output.trim()).map_err(|e| anyhow!("Failed to parse JSON: {e}"))?;
+
+    // Look for type="result" with the title in the "result" field
+    if let Some(type_val) = parsed.get("type") {
+        if type_val == "result" {
+            if let Some(result_text) = parsed.get("result").and_then(|v| v.as_str()) {
+                let title = result_text.trim().to_string();
+
+                if title.is_empty() {
+                    return Err(anyhow!("Empty title in result field"));
+                }
+
+                return validate_and_clean_title(title);
+            }
+        }
+    }
+
+    Err(anyhow!("No title found in Claude output"))
+}
+
+/// Validate and clean AI-generated title
+fn validate_and_clean_title(title: String) -> Result<String> {
+    // Clean up the title (remove quotes, trim whitespace)
+    let title = title.trim().trim_matches('"').trim().to_string();
+
+    // SECURITY: Sanitize title to prevent XSS/SQL injection
+    // Only allow alphanumeric characters, whitespace, and common punctuation
+    if !title
+        .chars()
+        .all(|c| c.is_alphanumeric() || c.is_whitespace() || " -_,.!?'\"".contains(c))
+    {
+        log::warn!("Title contains invalid characters, using heuristic fallback");
+        return Err(anyhow!("Title contains invalid characters"));
+    }
+
+    // Validate length (should be 5-10 words as requested)
+    let word_count = title.split_whitespace().count();
+    if word_count > 15 {
+        log::warn!("Generated title has {word_count} words (expected 5-10): '{title}'");
+        // Truncate to ~50 chars as fallback
+        return Ok(generate_heuristic_title(&title));
+    }
+
+    Ok(title)
+}
+
 /// Service for managing Claude Code interactions within Docker containers
 pub struct ClaudeService {
     docker: Arc<DockerService>,
@@ -415,6 +495,182 @@ impl ClaudeService {
     fn parse_jsonl_line(&self, line: &str) -> Result<Option<ParsedMessage>> {
         // Delegate to standalone function (ensures both history and streaming use same logic)
         parse_claude_jsonl_line(line)
+    }
+
+    /// Generate an AI-powered session title using Claude CLI in isolated environment
+    ///
+    /// Runs Claude Haiku in /tmp working directory to avoid polluting user's session.
+    /// Returns a 5-10 word summary of the user's message suitable for display as a title.
+    ///
+    /// # Arguments
+    /// * `container_id` - Docker container ID to run Claude CLI in
+    /// * `user_message` - The initial user message to summarize
+    ///
+    /// # Returns
+    /// AI-generated title string (5-10 words)
+    ///
+    /// # Errors
+    /// Returns error if container exec fails or response parsing fails
+    pub async fn generate_ai_session_title(
+        &self,
+        container_id: &str,
+        user_message: &str,
+    ) -> Result<String> {
+        let start = std::time::Instant::now();
+
+        // Validate input
+        if user_message.is_empty() {
+            return Err(anyhow!("Cannot generate title from empty message"));
+        }
+
+        // Create title generation prompt
+        let prompt = format!(
+            "Summarize this request in 5-10 words for use as a session title. \
+            Reply with ONLY the title, nothing else:\n\n{user_message}"
+        );
+
+        log::info!(
+            "Generating AI title for message: {}",
+            &user_message.chars().take(50).collect::<String>()
+        );
+
+        // Build Claude command - NO --resume flag (new isolated session)
+        let cmd = vec![
+            "claude".to_string(),
+            "--model".to_string(),
+            "haiku".to_string(), // Cheaper, faster model
+            "--dangerously-skip-permissions".to_string(),
+            "--output-format".to_string(),
+            "json".to_string(), // Non-streaming for simplicity
+            prompt,
+        ];
+
+        log::debug!("Title generation command: {cmd:?}");
+
+        // Execute in /tmp working directory (isolated from real sessions)
+        let (_exec_id, mut stream) = self
+            .docker
+            .exec_command(
+                container_id,
+                cmd,
+                Some("/tmp".to_string()), // KEY: Different CWD for isolation
+                None,
+                false,
+            )
+            .await
+            .map_err(|e| anyhow!("Failed to execute title generation command: {e}"))?;
+
+        // Collect output with timeout
+        const TITLE_TIMEOUT_SECS: u64 = 10;
+        let timeout = tokio::time::Duration::from_secs(TITLE_TIMEOUT_SECS);
+
+        let mut output = String::new();
+        let result = tokio::time::timeout(timeout, async {
+            use futures_util::StreamExt;
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    Ok(data) => output.push_str(&data),
+                    Err(e) => log::warn!("Stream error during title generation: {e}"),
+                }
+            }
+        })
+        .await;
+
+        if result.is_err() {
+            log::warn!("Title generation timed out after {TITLE_TIMEOUT_SECS}s");
+            return Err(anyhow!("Title generation timed out"));
+        }
+
+        log::debug!("Title generation raw output: {}", &output);
+
+        // Parse response - Claude CLI returns JSON with final message
+        // Extract the assistant's response text
+        let title = parse_title_from_claude_output(&output)?;
+
+        let duration = start.elapsed();
+        log::info!(
+            "Generated AI title in {:.2}s: '{}'",
+            duration.as_secs_f64(),
+            title
+        );
+
+        Ok(title)
+    }
+
+    /// Clean up orphaned session files created during title generation
+    ///
+    /// Title generation creates session files in /tmp that are no longer needed
+    /// after the title is extracted. This method finds and deletes them.
+    ///
+    /// # Arguments
+    /// * `container_id` - Docker container ID
+    ///
+    /// # Note
+    /// This is best-effort cleanup. Failures are logged but not returned as errors
+    /// since they don't affect functionality.
+    pub async fn cleanup_title_generation_sessions(&self, container_id: &str) {
+        log::debug!("Cleaning up title generation session files in /tmp");
+
+        // Find all .jsonl files in the /tmp session directory
+        let find_cmd = vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "ls /home/claude/.claude/projects/-tmp/*.jsonl 2>/dev/null || true".to_string(),
+        ];
+
+        let (_, mut stream) = match self
+            .docker
+            .exec_command(
+                container_id,
+                find_cmd,
+                Some("/tmp".to_string()),
+                None,
+                false,
+            )
+            .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                log::warn!("Failed to list title generation session files: {e}");
+                return;
+            }
+        };
+
+        // Collect file list
+        use futures_util::StreamExt;
+        let mut file_list = String::new();
+        while let Some(chunk) = stream.next().await {
+            if let Ok(data) = chunk {
+                file_list.push_str(&data);
+            }
+        }
+
+        let files: Vec<&str> = file_list.lines().filter(|l| !l.is_empty()).collect();
+
+        if files.is_empty() {
+            log::debug!("No title generation session files to clean up");
+            return;
+        }
+
+        log::info!(
+            "Found {} title generation session files to clean up",
+            files.len()
+        );
+
+        // Delete each file
+        for file_path in files {
+            let rm_cmd = vec!["rm".to_string(), "-f".to_string(), file_path.to_string()];
+
+            if let Err(e) = self
+                .docker
+                .exec_command(container_id, rm_cmd, Some("/tmp".to_string()), None, false)
+                .await
+            {
+                log::warn!("Failed to delete {file_path}: {e}");
+            } else {
+                log::debug!("Deleted title generation session file: {file_path}");
+            }
+        }
     }
 }
 
@@ -839,4 +1095,54 @@ async fn stream_docker_output(
     });
 
     Ok(rx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_heuristic_title_short_message() {
+        assert_eq!(generate_heuristic_title("Help me debug"), "Help me debug");
+    }
+
+    #[test]
+    fn test_heuristic_title_long_message() {
+        let msg = "This is a very long message that definitely exceeds fifty characters total";
+        let title = generate_heuristic_title(msg);
+        assert!(title.len() <= 53); // 50 + "..."
+        assert!(title.ends_with("..."));
+    }
+
+    #[test]
+    fn test_heuristic_title_word_boundary() {
+        let msg = "Create a function that calculates the fibonacci sequence";
+        let title = generate_heuristic_title(msg);
+        // Should break at "that" not mid-word
+        assert!(title.ends_with("..."));
+        assert!(!title.contains("calcu")); // Shouldn't break mid-word "calculates"
+    }
+
+    #[test]
+    fn test_heuristic_title_no_spaces() {
+        let msg = "a".repeat(100);
+        let title = generate_heuristic_title(&msg);
+        // Should still truncate even without word boundaries
+        assert_eq!(title.len(), 53); // 50 + "..."
+        assert!(title.ends_with("..."));
+    }
+
+    #[test]
+    fn test_heuristic_title_exact_length() {
+        let msg = "a".repeat(50);
+        let title = generate_heuristic_title(&msg);
+        // Exactly 50 chars - no truncation needed
+        assert_eq!(title.len(), 50);
+        assert!(!title.ends_with("..."));
+    }
+
+    #[test]
+    fn test_heuristic_title_whitespace() {
+        assert_eq!(generate_heuristic_title("  Hello World  "), "Hello World");
+    }
 }

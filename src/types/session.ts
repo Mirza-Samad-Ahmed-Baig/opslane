@@ -46,7 +46,7 @@ export interface Session {
  */
 export interface NewSession {
   project_id: string; // NEW: FK to projects
-  name: string;
+  name?: string; // Optional - will auto-generate if not provided
   base_branch: string;
   initial_message?: string; // Optional initial message to send to Claude
 }
