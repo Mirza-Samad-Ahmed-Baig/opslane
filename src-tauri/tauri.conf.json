@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Opslane",
+  "productName": "opslane",
   "version": "0.1.0",
   "identifier": "com.opslane.desktop",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Opslane",
+        "title": "Opslane Desktop",
         "width": 1200,
         "height": 800,
         "minWidth": 800,
@@ -20,6 +20,8 @@
         "resizable": true,
         "fullscreen": false,
         "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
         "center": true,
         "visible": false
       }

@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useTheme } from 'next-themes';
 import { Sun, Moon, ArrowLeft, Loader2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import { isMacOS } from '@/utils/platform';
+import { WindowControls } from '@/components/WindowControls';
 import { Alert } from '@/components/ui/alert';
 import {
   Card,
@@ -49,11 +51,20 @@ export function ComponentShowcase() {
   const { theme, setTheme } = useTheme();
   const [inputValue, setInputValue] = useState('');
 
+  // Platform detection for titlebar
+  const [isMac, setIsMac] = useState(false);
+
+  useEffect(() => {
+    setIsMac(isMacOS());
+  }, []);
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="border-b sticky top-0 bg-background z-10">
-        <div className="container mx-auto px-6 py-4 flex items-center justify-between">
+      <header className="border-b sticky top-0 bg-background z-10 titlebar-drag-region">
+        <div
+          className={`container mx-auto px-6 py-4 flex items-center justify-between ${isMac ? 'macos-traffic-lights-padding' : ''}`}
+        >
           <div className="flex items-center gap-4">
             <Link to="/">
               <Button variant="ghost" size="icon">
@@ -67,13 +78,16 @@ export function ComponentShowcase() {
               </p>
             </div>
           </div>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-          >
-            {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            >
+              {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </Button>
+            <WindowControls />
+          </div>
         </div>
       </header>
 

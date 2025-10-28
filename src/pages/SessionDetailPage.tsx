@@ -13,8 +13,9 @@ import { SessionStatusBadge } from '@/components/SessionStatusBadge';
 import { EnableSyncConfirmation } from '@/components/sync/EnableSyncConfirmation';
 import { HeaderSyncStatus } from '@/components/sync/HeaderSyncStatus';
 import { NotificationBell } from '@/components/notifications/NotificationBell';
-import { CollapsibleSidebar, MobileSidebarButton } from '@/components/CollapsibleSidebar';
+import { WindowControls } from '@/components/WindowControls';
 import { logger } from '@/utils/logger';
+import { isMacOS } from '@/utils/platform';
 import type { DisplayMessage, ImageAttachment, ContentBlockInput } from '@/types/messages';
 
 interface SessionDetailLocationState {
@@ -45,7 +46,13 @@ export function SessionDetailPage() {
   const { data: project } = useProject(session?.project_id);
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
   const [showEnableSyncDialog, setShowEnableSyncDialog] = useState(false);
-  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+
+  // Platform detection for titlebar
+  const [isMac, setIsMac] = useState(false);
+
+  useEffect(() => {
+    setIsMac(isMacOS());
+  }, []);
 
   // Two-way sync management
   const {
@@ -250,25 +257,20 @@ export function SessionDetailPage() {
     <div className="h-screen flex flex-col">
       {/* Header with back button */}
       <header
-        className="border-b px-6 py-3 flex items-center gap-4"
+        className={`border-b py-3 flex items-center gap-4 titlebar-drag-region ${isMac ? 'px-6' : 'px-6'}`}
         aria-label="Session detail header"
       >
-        {/* Mobile: hamburger menu only | Desktop: back button only */}
-        <>
-          {/* Hamburger menu - mobile only */}
-          <MobileSidebarButton onClick={() => setMobileSidebarOpen(true)} />
-
-          {/* Back button - desktop only */}
+        <div className={isMac ? 'macos-traffic-lights-padding' : ''}>
           <Button
             variant="ghost"
             size="icon"
             onClick={() => navigate('/')}
             title="Back to Home (Esc)"
-            className="hidden md:inline-flex"
+            autoFocus
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
-        </>
+        </div>
         <div className="flex-1 min-w-0">
           <h1 className="text-lg font-semibold">{session.name}</h1>
           <p className="text-xs text-muted-foreground truncate max-w-2xl">
@@ -304,6 +306,7 @@ export function SessionDetailPage() {
             </Button>
           )}
           <SessionStatusBadge status={session.status} />
+          <WindowControls />
         </div>
       </header>
 
@@ -397,29 +400,29 @@ export function SessionDetailPage() {
         </div>
       )}
 
-      {/* Three-column layout with collapsible left sidebar */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Collapsible session list sidebar */}
-        <CollapsibleSidebar
-          storageKey="session-list-collapsed"
-          mobileTitle="Sessions"
-          mobileOpen={mobileSidebarOpen}
-          onMobileOpenChange={setMobileSidebarOpen}
-        >
+      {/* Three-column layout (Design Principle #5: Progressive Disclosure) */}
+      {/* BLOCKER FIX: Responsive layout for mobile/tablet/desktop */}
+      <div
+        className="flex-1 grid overflow-hidden
+        grid-cols-1
+        md:grid-cols-[280px_1fr]
+        lg:grid-cols-[320px_1fr_minmax(320px,480px)]
+      "
+      >
+        {/* Session list - hidden on mobile, visible on tablet+ */}
+        <div className="hidden md:block overflow-hidden">
           <SessionList activeSessionId={session.id} />
-        </CollapsibleSidebar>
-
-        {/* Message panel - always visible, fills remaining space */}
-        <div className="flex-1 min-w-0">
-          <MessagePanel
-            sessionId={session.id}
-            optimisticMessage={optimisticMessage}
-            isSettingUp={isSettingUp}
-          />
         </div>
 
+        {/* Message panel - always visible */}
+        <MessagePanel
+          sessionId={session.id}
+          optimisticMessage={optimisticMessage}
+          isSettingUp={isSettingUp}
+        />
+
         {/* Diff viewer - hidden on mobile/tablet, visible on desktop */}
-        <div className="hidden lg:flex lg:w-[320px] xl:w-[480px] flex-shrink-0 h-full">
+        <div className="hidden lg:block">
           <DiffViewer sessionId={session.id} projectId={session.project_id} />
         </div>
       </div>

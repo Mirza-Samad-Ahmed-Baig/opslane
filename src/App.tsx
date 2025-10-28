@@ -19,7 +19,6 @@ import { HeaderSyncStatus } from '@/components/sync/HeaderSyncStatus';
 import { NotificationBell } from '@/components/notifications/NotificationBell';
 import { ComponentShowcase } from '@/pages/ComponentShowcase';
 import { SessionDetailPage } from '@/pages/SessionDetailPage';
-import { CollapsibleSidebar } from '@/components/CollapsibleSidebar';
 import { useDockerStatus, useCreateSession, useProjects, useGetOrCreateProject } from '@/hooks';
 import type { SessionProgressEvent, NewSession } from '@/types/session';
 import type { Project } from '@/types/project';
@@ -27,6 +26,8 @@ import type { ImageAttachment, ContentBlockInput } from '@/types/messages';
 import { logger } from './utils/logger';
 import { toastPatterns } from '@/lib/toast-patterns';
 import { checkNotificationPermission } from '@/utils/notifications';
+import { isMacOS } from '@/utils/platform';
+import { WindowControls } from '@/components/WindowControls';
 import './App.css';
 
 function HomePage() {
@@ -45,6 +46,13 @@ function HomePage() {
 
   // Track if we're currently creating a session (for button feedback only)
   const [isCreating, setIsCreating] = useState(false);
+
+  // Platform detection for titlebar
+  const [isMac, setIsMac] = useState(false);
+
+  useEffect(() => {
+    setIsMac(isMacOS());
+  }, []);
 
   // Quick-start handler - now accepts images from ChatInput
   const handleQuickStart = async (message: string, images?: ImageAttachment[]) => {
@@ -207,8 +215,10 @@ function HomePage() {
   return (
     <div className="h-screen flex flex-col bg-background">
       {/* Header */}
-      <header className="border-b flex-shrink-0">
-        <div className="container mx-auto px-6 py-4 flex items-center justify-between">
+      <header className="border-b flex-shrink-0 titlebar-drag-region">
+        <div
+          className={`container mx-auto px-6 py-4 flex items-center justify-between ${isMac ? 'macos-traffic-lights-padding' : ''}`}
+        >
           <div>
             <h1 className="text-2xl font-bold">Opslane</h1>
             <p className="text-sm text-muted-foreground">Manage your Claude development sessions</p>
@@ -224,6 +234,8 @@ function HomePage() {
                 <Palette className="h-4 w-4" />
               </Button>
             </Link>
+
+            <WindowControls />
           </div>
         </div>
       </header>
@@ -239,10 +251,10 @@ function HomePage() {
 
       {/* Main Layout - Left nav + Center quick-start */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Collapsible session list sidebar */}
-        <CollapsibleSidebar storageKey="home-session-list-collapsed">
+        {/* Left Navigation Panel - Session List - hidden on mobile, visible on tablet+ */}
+        <div className="hidden md:flex md:w-[280px] lg:w-80 flex-shrink-0 flex-col overflow-auto">
           <SessionList />
-        </CollapsibleSidebar>
+        </div>
 
         {/* Center Panel - Quick-start input */}
         <div className="flex-1 flex items-center justify-center bg-background">

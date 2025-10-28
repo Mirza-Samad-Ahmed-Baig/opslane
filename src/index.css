@@ -405,3 +405,38 @@ pre {
   clip: auto;
   white-space: normal;
 }
+
+/* ============================================================================
+ * Custom Titlebar Styles
+ * ============================================================================
+ * These styles enable the custom titlebar with blended traffic lights on macOS
+ * and ensure proper window dragging behavior across all platforms.
+ */
+
+/* Make the header draggable to move the window */
+.titlebar-drag-region {
+  -webkit-app-region: drag;
+  user-select: none; /* Prevent text selection while dragging */
+}
+
+/* Interactive elements should not trigger window dragging */
+.titlebar-drag-region button,
+.titlebar-drag-region a,
+.titlebar-drag-region input,
+.titlebar-drag-region select,
+.titlebar-drag-region textarea,
+.titlebar-drag-region [role='button'],
+.titlebar-drag-region [role='link'] {
+  -webkit-app-region: no-drag;
+  user-select: auto; /* Re-enable text selection for interactive elements */
+}
+
+/* macOS-specific: Add left padding to avoid overlapping traffic lights */
+.macos-traffic-lights-padding {
+  padding-left: 80px; /* Space for red, yellow, green buttons */
+}
+
+/* Optional: Add top padding for better vertical alignment on macOS */
+.macos-titlebar-height {
+  min-height: 52px; /* Ensures header is tall enough for traffic lights */
+}
