@@ -2,31 +2,31 @@
 
 Desktop app for managing multiple Claude Code sessions in parallel.
 
-## Tech Stack
+## What is Opslane?
 
-- **Backend**: Tauri 2.0 (Rust)
-- **Frontend**: React 19 + TypeScript
-- **Build Tool**: Vite 5
-- **Styling**: Tailwind CSS 4
-- **Package Manager**: npm
+Opslane lets you work on multiple projects simultaneously with Claude AI assistance. Each session runs in an isolated Docker container, allowing you to experiment, iterate, and develop features without affecting your local repositories.
 
-## Performance Characteristics
+Claude can work on different features across multiple projects, review changes in real-time, and selectively apply them to your local codebase when ready.
 
-Based on the [cross-platform architecture research](thoughts/shared/research/2025-01-13-cross-platform-desktop-architecture.md):
+## Key Features
 
-- **Bundle Size**: 3-10 MB (vs 80-120 MB for Electron)
-- **Memory Usage**: 30-40 MB idle (vs 100+ MB for Electron)
-- **Startup Time**: <500ms (vs 1-2s for Electron)
-- **Native Performance**: Direct system calls via Rust
+- 🚀 **Multi-Session Management** - Work on multiple projects simultaneously with isolated sessions
+- 🔍 **Live Diff Viewer** - Review all file changes with syntax highlighting before applying
+- 🔄 **Two-Way Sync** - Optional bidirectional file synchronization between container and local repo
+- 📦 **Docker Isolation** - Each session runs in its own container with resource limits
+- 📚 **Session Archiving** - Preserve completed sessions for future reference
 
 ## Quick Start
 
 ### Prerequisites
+
 - Node.js 18+
 - Rust 1.77+
-- Docker Desktop
+- Docker Desktop (running)
+- Claude Code CLI with OAuth credentials configured
 
-### Install & Run
+### Installation
+
 ```bash
 git clone https://github.com/opslane/opslane.git
 cd opslane
@@ -34,34 +34,54 @@ npm install
 npm run tauri:dev
 ```
 
-## Project Structure
-```
-opslane/
-├── src/           # React frontend
-├── src-tauri/     # Rust backend
-│   ├── migrations/  # Database migrations
-│   └── src/
-│       ├── commands/  # Tauri commands
-│       ├── services/  # Business logic (Phase 1+)
-│       └── models/    # Data structures (Phase 1+)
-└── specs/         # Product docs
-```
+The app will launch with hot reload enabled for development.
+
+### First Session
+
+1. Click "New Session" in the app
+2. Select a local Git repository
+3. Describe your task (e.g., "Add user authentication")
+4. Choose a Claude model (Sonnet, Opus, or Haiku)
+5. Click "Start Session"
+
+Claude will begin working in an isolated container while you monitor progress in real-time.
+
+## How It Works
+
+1. **Create Session** - Select project directory, describe task, choose Claude model
+2. **Claude Works** - AI reads files, edits code, runs commands in isolated container
+3. **Review Changes** - View diffs in real-time with syntax highlighting
+4. **Sync to Local** - Apply container changes to your local repository when ready
+5. **Archive** - Preserve session history for future reference
+
+Each session is completely isolated - experiments in one session never affect others or your local files until you explicitly sync changes.
+
+## Tech Stack
+
+- **Backend**: Tauri 2.0 (Rust)
+- **Frontend**: React 19 + TypeScript
+- **Database**: SQLite
+- **Styling**: Tailwind CSS 4
+- **Build Tool**: Vite 5
+
+## Performance
+
+Based on [cross-platform architecture research](thoughts/shared/research/archive/2025-01-13-cross-platform-desktop-architecture.md):
+
+- **Bundle Size**: 3-10 MB (vs 80-120 MB for Electron)
+- **Memory Usage**: 30-40 MB idle (vs 100+ MB for Electron)
+- **Startup Time**: <500ms (vs 1-2s for Electron)
+- **Native Performance**: Direct system calls via Rust
 
 ## Development
-See [CONTRIBUTING.md](CONTRIBUTING.md)
 
-## Documentation
-- [Architecture](specs/architecture.md)
-- [Database Schema](specs/database-schema.md)
-- [Milestones](specs/milestones.md)
-
-## Development Commands
+### Common Commands
 
 ```bash
 # Start development server with hot reload
 npm run tauri:dev
 
-# Run frontend only (useful for UI development)
+# Run frontend only (UI development)
 npm run dev
 
 # Type checking
@@ -69,107 +89,71 @@ npm run typecheck
 
 # Linting
 npm run lint
-```
 
-## Building
-
-```bash
 # Build for production
 npm run tauri:build
-
-# The built application will be in:
-# - macOS: src-tauri/target/release/bundle/macos/
-# - Windows: src-tauri/target/release/bundle/msi/
-# - Linux: src-tauri/target/release/bundle/deb/ or .appimage
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed development guidelines, including how to add Tauri commands and submit pull requests.
+
+## Documentation
+
+- [Product Requirements](specs/prd.md) - Product vision and goals
+- [Architecture](specs/architecture.md) - System architecture and design
+- [Design Principles](specs/design-principles.md) - Core design philosophy
+- [UX Design](specs/ux-design.md) - User experience and interaction design
+- [Database Schema](specs/database-schema.md) - Data models and migrations
+- [Milestones](specs/milestones.md) - Implementation roadmap
 
 ## Project Structure
 
 ```
 opslane/
-├── src/                    # React frontend
-│   ├── App.tsx            # Main React component
-│   ├── App.css            # Component styles
-│   ├── main.tsx           # React entry point
-│   └── index.css          # Global styles
-├── src-tauri/             # Rust backend
-│   ├── src/
-│   │   ├── lib.rs         # Tauri application & commands
-│   │   └── main.rs        # Application entry point
-│   ├── icons/             # Application icons
-│   ├── Cargo.toml         # Rust dependencies
-│   └── tauri.conf.json    # Tauri configuration
-├── index.html             # HTML entry point
-├── package.json           # Node dependencies & scripts
-├── vite.config.ts         # Vite configuration
-├── tsconfig.json          # TypeScript configuration
-└── tailwind.config.js     # Tailwind CSS configuration
-```
-
-## Architecture
-
-### Frontend → Backend Communication
-
-The app uses Tauri commands to communicate between React (frontend) and Rust (backend):
-
-```typescript
-// Frontend (TypeScript)
-import { invoke } from "@tauri-apps/api/core";
-
-const result = await invoke<string>("greet", { name: "World" });
-```
-
-```rust
-// Backend (Rust)
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}!", name)
-}
-```
-
-### Adding New Tauri Commands
-
-1. Define command in `src-tauri/src/lib.rs`:
-```rust
-#[tauri::command]
-fn my_command(param: &str) -> Result<String, String> {
-    Ok(format!("Received: {}", param))
-}
-```
-
-2. Register command in `run()` function:
-```rust
-.invoke_handler(tauri::generate_handler![greet, get_system_info, my_command])
-```
-
-3. Call from frontend:
-```typescript
-const result = await invoke<string>("my_command", { param: "value" });
+├── src/              # React frontend
+│   ├── components/   # UI components
+│   ├── hooks/        # Custom React hooks
+│   ├── lib/          # Utilities and helpers
+│   └── types/        # TypeScript types
+├── src-tauri/        # Rust backend
+│   ├── migrations/   # SQLite migrations
+│   └── src/
+│       ├── commands/ # Tauri IPC commands
+│       ├── services/ # Business logic
+│       └── models/   # Data structures
+└── specs/            # Product documentation
 ```
 
 ## Troubleshooting
 
-### Development server won't start
-- Ensure port 5173 is not in use
-- Check that Node.js and Rust are properly installed
-- Try `npm install` again
+Having issues? Check the [Troubleshooting Guide](TROUBLESHOOTING.md) for solutions to common problems:
 
-### Rust compilation errors
-- Update Rust: `rustup update`
-- Clear Cargo cache: `cd src-tauri && cargo clean`
-- Check platform-specific dependencies are installed
+- Docker not running
+- Port conflicts
+- Rust compilation errors
+- Hot reload issues
+- Session creation failures
 
-### Hot reload not working
-- Restart dev server: Ctrl+C and `npm run tauri:dev`
-- Check that file watcher isn't hitting limits (Linux: increase inotify watches)
+## Support
+
+- 📖 [Documentation](https://opslane.com)
+- 🐛 [Issue Tracker](https://github.com/opslane/opslane/issues)
+- 💬 Discord community - TODO
+
+## Contributing
+
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
+
+- Development setup
+- Code style and standards
+- Adding new features
+- Submitting pull requests
+
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Resources
 
 - [Tauri Documentation](https://tauri.app/)
 - [React Documentation](https://react.dev/)
 - [Vite Documentation](https://vitejs.dev/)
-- [Research Document](thoughts/shared/research/2025-01-13-cross-platform-desktop-architecture.md)
-
-## License
-
-[Your License Here]
