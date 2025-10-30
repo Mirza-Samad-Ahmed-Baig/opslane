@@ -64,15 +64,6 @@ Each session is completely isolated - experiments in one session never affect ot
 - **Styling**: Tailwind CSS 4
 - **Build Tool**: Vite 5
 
-## Performance
-
-Based on [cross-platform architecture research](thoughts/shared/research/archive/2025-01-13-cross-platform-desktop-architecture.md):
-
-- **Bundle Size**: 3-10 MB (vs 80-120 MB for Electron)
-- **Memory Usage**: 30-40 MB idle (vs 100+ MB for Electron)
-- **Startup Time**: <500ms (vs 1-2s for Electron)
-- **Native Performance**: Direct system calls via Rust
-
 ## Development
 
 ### Common Commands
