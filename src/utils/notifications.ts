@@ -107,7 +107,7 @@ export function notifyTaskComplete(sessionName?: string): void {
   console.log('[Notifications] notifyTaskComplete called, sessionName:', sessionName);
   const safeName = sessionName ? sanitizeForNotification(sessionName) : undefined;
   showNotification({
-    title: '✅ Claude Code',
+    title: '✅ Opslane',
     body: safeName ? `Task completed in "${safeName}"` : 'Task completed',
   }).catch((err) => console.error('[Notifications] Error in notifyTaskComplete:', err));
 }
@@ -120,7 +120,7 @@ export function notifyError(error: string, sessionName?: string): void {
   const safeError = sanitizeForNotification(error);
   const safeName = sessionName ? sanitizeForNotification(sessionName) : undefined;
   showNotification({
-    title: '❌ Claude Code Error',
+    title: '❌ Opslane Error',
     body: safeName ? `Error in "${safeName}": ${safeError}` : safeError,
   }).catch((err) => console.error('[Notifications] Error in notifyError:', err));
 }

@@ -7,9 +7,9 @@
 #[cfg(test)]
 #[cfg(feature = "integration-tests")]
 mod session_lifecycle_tests {
-    use app_lib::database::Database;
-    use app_lib::models::NewSession;
-    use app_lib::services::docker_service::DockerService;
+    use opslane_lib::database::Database;
+    use opslane_lib::models::NewSession;
+    use opslane_lib::services::docker_service::DockerService;
 
     #[tokio::test]
     async fn test_database_and_volume_integration() {
