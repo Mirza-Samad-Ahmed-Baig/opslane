@@ -141,5 +141,9 @@ pub fn run() {
             })
         })
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .map_err(|e| {
+            log::error!("Fatal error while running Tauri application: {e}");
+            e
+        })
+        .ok(); // Allow graceful exit instead of panicking
 }

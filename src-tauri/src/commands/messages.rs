@@ -165,7 +165,7 @@ async fn save_base64_to_temp_file(session_id: &str, data: &str) -> Result<String
     // Generate unique filename with timestamp for cleanup
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .map_err(|e| format!("System time error for session {session_id}: {e}"))?
         .as_secs();
     let uuid = uuid::Uuid::new_v4();
     let filename = format!("{TEMP_IMAGE_PREFIX}{timestamp}-{uuid}.{extension}");
@@ -217,7 +217,7 @@ async fn cleanup_old_temp_images(session_id: &str) -> Result<(), String> {
     let max_age_secs = 300; // 5 minutes
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .map_err(|e| format!("System time error for session {session_id}: {e}"))?
         .as_secs();
 
     let dir = match std::fs::read_dir(&images_dir) {
